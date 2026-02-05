@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Toaster } from "@/components/ui/toaster"
 import { useToast } from "@/hooks/use-toast"
-import { protocol, type PortInfo } from "@/lib/protocol"
+import { protocol, type PortInfo, type SerialStats } from "@/lib/protocol"
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -22,7 +22,7 @@ import { usePreferences } from "@/contexts/PreferencesContext"
 import { PreferencesDialog } from "@/components/preferences-dialog"
 
 import { useTheme } from "@/components/theme-provider"
-import { Progress } from "@/components/ui/progress"
+
 import {
     Dialog,
     DialogContent,
@@ -32,6 +32,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { useRef, useEffect } from "react"
+import { FlashProgressDialog, type LogEntry } from "./components/flash-progress-dialog"
 
 function App() {
     const [connected, setConnected] = useState(false)
@@ -47,7 +48,9 @@ function App() {
     const [isFlashing, setIsFlashing] = useState(false);
     const [flashProgress, setFlashProgress] = useState(0);
     const [flashStep, setFlashStep] = useState("");
-    const [flashLogs, setFlashLogs] = useState<string[]>([]);
+    const [flashLogs, setFlashLogs] = useState<LogEntry[]>([]);
+    const [flashResult, setFlashResult] = useState<'success' | 'error' | null>(null);
+    const [flashStats, setFlashStats] = useState<SerialStats | null>(null);
     const [showSkip, setShowSkip] = useState(false);
     const [consoleLogs, setConsoleLogs] = useState<{ id: number; timestamp: string; type: 'info' | 'error' | 'success' | 'tx' | 'rx'; content: string; }[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -56,6 +59,29 @@ function App() {
     const { toast } = useToast()
     const { setBootloaderDetected } = usePreferences()
     const { theme, setTheme } = useTheme()
+
+    // Listen for unexpected disconnects
+    useEffect(() => {
+        protocol.onStatusChange = (status, error) => {
+            setConnected(status);
+            if (!status) {
+                setDeviceInfo(undefined);
+                setBootloaderDetected(false);
+                if (error) {
+                    toast({
+                        variant: "destructive",
+                        title: "Connection Lost",
+                        description: error,
+                    });
+                }
+            }
+        };
+
+        // Cleanup
+        return () => {
+            protocol.onStatusChange = null;
+        };
+    }, [toast, setBootloaderDetected]);
 
     const handleConnect = async (silent = false) => {
         if (connected) {
@@ -142,6 +168,8 @@ function App() {
         setFlashProgress(0);
         setFlashStep("Initializing...");
         setFlashLogs([]);
+        setFlashResult(null);
+        setFlashStats(null);
         setShowSkip(false);
 
         // Show skip button after 2.5s
@@ -150,24 +178,32 @@ function App() {
         // Save global logger to restore later
         const globalLog = protocol.onLog;
 
+        const addLog = (msg: string, type: LogEntry['type'] = 'info') => {
+            const time = new Date().toLocaleTimeString();
+            setFlashLogs(prev => [...prev.slice(-100), { time, message: msg, type }]);
+            if (type !== 'tx' && type !== 'rx') {
+                setFlashStep(msg);
+            }
+        };
+
         try {
             const buffer = await pendingFile.arrayBuffer();
             const data = new Uint8Array(buffer);
             // Hook up progress
             protocol.onProgress = (p) => setFlashProgress(p);
             protocol.onStepChange = (s) => setFlashStep(s);
+            protocol.onStatsUpdate = (s) => setFlashStats(s);
 
-            // We want both global log AND flash log.
             protocol.onLog = (msg, type) => {
                 if (globalLog) globalLog(msg, type);
-                const timestamp = new Date().toLocaleTimeString().split(' ')[0];
-                setFlashLogs(prev => [...prev.slice(-20), `[${timestamp}] ${msg}`]);
+                addLog(msg, type as any);
             };
 
             await protocol.flashFirmware(data);
 
             toast({ title: "Flashing Complete", description: "Device rebooting..." });
             setFlashStep("Complete");
+            setFlashResult('success');
         } catch (e: any) {
             console.error(e);
             toast({
@@ -176,18 +212,19 @@ function App() {
                 description: e.message
             });
             setFlashStep("Failed");
+            setFlashResult('error');
+            addLog(`Error: ${e.message}`, "error");
         } finally {
             clearTimeout(skipTimer);
-            // Delay closing to show success/fail state briefly
-            setTimeout(() => {
-                setIsFlashing(false);
-                setFlashProgress(0);
-                protocol.onProgress = null;
-                protocol.onStepChange = null;
-                // Restore global logger
-                protocol.onLog = globalLog;
-                setPendingFile(null);
-            }, 1000);
+            setIsFlashing(false);
+            protocol.onProgress = null;
+            protocol.onStepChange = null;
+            protocol.onStatsUpdate = null;
+            // Restore global logger (don't restore immediately so dialog can still show logs)
+            // Actually log is passed to dialog, so we can restore now.
+            protocol.onLog = globalLog;
+            // Don't set pendingFile to null yet, otherwise confirmation might show? 
+            // Actually Dialog handles its own close.
         }
     }
 
@@ -266,47 +303,24 @@ function App() {
                 </DialogContent>
             </Dialog>
 
-            {/* Flashing Progress Dialog */}
-            <Dialog open={isFlashing}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Flashing Firmware</DialogTitle>
-                        <DialogDescription>
-                            Please do not disconnect the device.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="py-2 space-y-4">
-                        <div className="space-y-1">
-                            <div className="flex justify-between text-xs text-muted-foreground font-medium">
-                                <span>{flashStep}</span>
-                                <span>{Math.round(flashProgress)}%</span>
-                            </div>
-                            <Progress value={flashProgress} />
-                        </div>
-
-                        {/* Log Output */}
-                        <div className="h-32 overflow-y-auto rounded-md bg-muted/50 p-2 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap border">
-                            {flashLogs.length === 0 ? <span className="opacity-50">Starting log...</span> : flashLogs.map((l, i) => (
-                                <div key={i}>{l}</div>
-                            ))}
-                        </div>
-
-                        {/* Skip Button */}
-                        {showSkip && flashStep.includes("Waiting") && (
-                            <div className="flex justify-center pt-2">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 hover:bg-transparent"
-                                    onClick={() => protocol.skipWaiting()}
-                                >
-                                    Skip waiting for DFU...
-                                </Button>
-                            </div>
-                        )}
-                    </div>
-                </DialogContent>
-            </Dialog>
+            {/* Unified Flash Progress Dialog */}
+            <FlashProgressDialog
+                isOpen={isFlashing || flashResult !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setFlashResult(null);
+                        setPendingFile(null);
+                    }
+                }}
+                isFlashing={isFlashing}
+                progress={flashProgress}
+                statusMessage={flashStep}
+                logs={flashLogs}
+                stats={flashStats}
+                flashResult={flashResult}
+                onSkipWaiting={() => protocol.skipWaiting()}
+                showSkipButton={showSkip && flashStep.includes("Waiting")}
+            />
 
             <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground font-sans tracking-tight antialiased selection:bg-neutral-200 selection:text-black dark:selection:bg-neutral-800 dark:selection:text-white">
                 {/* Header / Menu Bar */}
@@ -377,170 +391,174 @@ function App() {
                         deviceInfo={deviceInfo}
                     />
 
-                    <main className="flex-1 overflow-y-auto bg-muted/10 p-4 md:p-8 relative">
+                    <main className="flex-1 overflow-hidden bg-muted/10 relative flex flex-col">
                         {/* Context Menu Wrapper for the whole main area for global quick actions */}
                         <ContextMenu>
-                            <ContextMenuTrigger className="h-full w-full">
-                                <div className="mx-auto max-w-6xl space-y-8">
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-1">
-                                            <h2 className="text-2xl font-bold tracking-tight capitalize">{currentView}</h2>
-                                            <p className="text-sm text-muted-foreground">
-                                                Manage your radio {currentView === 'overview' ? 'system status' : currentView}.
-                                            </p>
+                            <ContextMenuTrigger className="flex-1 flex flex-col min-h-0">
+                                <div className="flex-1 flex flex-col p-4 md:p-8 min-h-0">
+                                    <div className="mx-auto w-full max-w-6xl flex-1 flex flex-col min-h-0 space-y-8">
+                                        <div className="flex items-center justify-between shrink-0">
+                                            <div className="space-y-1">
+                                                <h2 className="text-2xl font-bold tracking-tight capitalize">{currentView}</h2>
+                                                <p className="text-sm text-muted-foreground">
+                                                    Manage your radio {currentView === 'overview' ? 'system status' : currentView}.
+                                                </p>
+                                            </div>
                                         </div>
-                                    </div>
 
-                                    {/* Content Rendering based on currentView */}
-                                    <div className="space-y-4">
-                                        {currentView === 'overview' && (
-                                            <div className="space-y-6">
-                                                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                                                    <Card>
-                                                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                                            <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
-                                                            <Terminal className="h-4 w-4 text-muted-foreground" />
-                                                        </CardHeader>
-                                                        <CardContent>
-                                                            <div className="text-2xl font-bold">12%</div>
-                                                            <p className="text-xs text-muted-foreground">42/1024 slots occupied</p>
-                                                        </CardContent>
-                                                    </Card>
-                                                    <Card>
-                                                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                                            <CardTitle className="text-sm font-medium">Battery Level</CardTitle>
-                                                            <Zap className="h-4 w-4 text-muted-foreground" />
-                                                        </CardHeader>
-                                                        <CardContent>
-                                                            <div className="text-2xl font-bold">--%</div>
-                                                            <p className="text-xs text-muted-foreground">Voltage: -- V</p>
-                                                        </CardContent>
-                                                    </Card>
-                                                    <Card>
-                                                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                                            <CardTitle className="text-sm font-medium">Status</CardTitle>
-                                                            <Shield className="h-4 w-4 text-muted-foreground" />
-                                                        </CardHeader>
-                                                        <CardContent>
-                                                            <div className="text-2xl font-bold">{connected ? "Connected" : "Idle"}</div>
-                                                            <p className="text-xs text-muted-foreground">WebSerial Driver</p>
-                                                        </CardContent>
-                                                    </Card>
-                                                </div>
-                                                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                                                    <Card className="col-span-4">
-                                                        <CardHeader>
-                                                            <CardTitle>Quick Actions</CardTitle>
-                                                            <CardDescription>
-                                                                Common tasks and operations for your radio.
-                                                            </CardDescription>
-                                                        </CardHeader>
-                                                        <CardContent className="space-y-2">
-                                                            <Button variant="outline" className="w-full justify-between">
-                                                                Backup Calibration
-                                                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                                                            </Button>
-                                                            <Button variant="outline" className="w-full justify-between">
-                                                                Export Memory Channel CSV
-                                                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                                                            </Button>
-                                                            <Button variant="outline" className="w-full justify-between">
-                                                                Factory Reset
-                                                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                                                            </Button>
-                                                        </CardContent>
-                                                    </Card>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {currentView === 'flasher' && (
-                                            <FlasherView onBusyChange={setIsBusy} />
-                                        )}
-
-                                        {currentView === 'memories' && (
-                                            <Card>
-                                                <CardContent className="p-0">
-                                                    <Table>
-                                                        <TableHeader>
-                                                            <TableRow>
-                                                                <TableHead className="w-[80px]">CH</TableHead>
-                                                                <TableHead>Name</TableHead>
-                                                                <TableHead>Frequency</TableHead>
-                                                                <TableHead>Modulation</TableHead>
-                                                                <TableHead className="text-right">Action</TableHead>
-                                                            </TableRow>
-                                                        </TableHeader>
-                                                        <TableBody>
-                                                            <TableRow>
-                                                                <TableCell className="font-mono font-medium">001</TableCell>
-                                                                <TableCell>Local Repeater</TableCell>
-                                                                <TableCell className="font-mono text-muted-foreground">145.600</TableCell>
-                                                                <TableCell><Badge variant="secondary">FM</Badge></TableCell>
-                                                                <TableCell className="text-right">
-                                                                    <Button variant="ghost" size="sm">Edit</Button>
-                                                                </TableCell>
-                                                            </TableRow>
-                                                            <TableRow>
-                                                                <TableCell className="font-mono font-medium">002</TableCell>
-                                                                <TableCell>Simplex Call</TableCell>
-                                                                <TableCell className="font-mono text-muted-foreground">145.500</TableCell>
-                                                                <TableCell><Badge variant="secondary">FM</Badge></TableCell>
-                                                                <TableCell className="text-right">
-                                                                    <Button variant="ghost" size="sm">Edit</Button>
-                                                                </TableCell>
-                                                            </TableRow>
-                                                        </TableBody>
-                                                    </Table>
-                                                </CardContent>
-                                            </Card>
-                                        )}
-
-                                        {currentView === 'remote' && (
-                                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7 ">
-                                                <Card className="lg:col-span-5 bg-zinc-950 dark:border-zinc-800">
-                                                    <div className="aspect-video w-full flex items-center justify-center relative overflow-hidden bg-zinc-950 rounded-lg">
-                                                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-zinc-950 to-black opacity-80" />
-                                                        <div className="text-center space-y-2 relative z-10">
-                                                            <div className="text-6xl font-mono font-bold text-emerald-500 tracking-tighter drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]">
-                                                                145.600
-                                                            </div>
-                                                            <div className="flex justify-center space-x-2">
-                                                                <Badge variant="outline" className="border-emerald-500/50 text-emerald-500">RX</Badge>
-                                                                <Badge variant="outline" className="border-zinc-700 text-zinc-500">FM</Badge>
-                                                            </div>
+                                        {/* Content Rendering based on currentView */}
+                                        <div className="flex-1 min-h-0 overflow-y-auto pr-2 -mr-2">
+                                            <div className="space-y-4 h-full">
+                                                {currentView === 'overview' && (
+                                                    <div className="space-y-6">
+                                                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                                            <Card>
+                                                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                                                    <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
+                                                                    <Terminal className="h-4 w-4 text-muted-foreground" />
+                                                                </CardHeader>
+                                                                <CardContent>
+                                                                    <div className="text-2xl font-bold">12%</div>
+                                                                    <p className="text-xs text-muted-foreground">42/1024 slots occupied</p>
+                                                                </CardContent>
+                                                            </Card>
+                                                            <Card>
+                                                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                                                    <CardTitle className="text-sm font-medium">Battery Level</CardTitle>
+                                                                    <Zap className="h-4 w-4 text-muted-foreground" />
+                                                                </CardHeader>
+                                                                <CardContent>
+                                                                    <div className="text-2xl font-bold">--%</div>
+                                                                    <p className="text-xs text-muted-foreground">Voltage: -- V</p>
+                                                                </CardContent>
+                                                            </Card>
+                                                            <Card>
+                                                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                                                    <CardTitle className="text-sm font-medium">Status</CardTitle>
+                                                                    <Shield className="h-4 w-4 text-muted-foreground" />
+                                                                </CardHeader>
+                                                                <CardContent>
+                                                                    <div className="text-2xl font-bold">{connected ? "Connected" : "Idle"}</div>
+                                                                    <p className="text-xs text-muted-foreground">WebSerial Driver</p>
+                                                                </CardContent>
+                                                            </Card>
                                                         </div>
-                                                        {/* Scanlines effect overlay */}
-                                                        <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,3px_100%] pointer-events-none" />
+                                                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                                                            <Card className="col-span-4">
+                                                                <CardHeader>
+                                                                    <CardTitle>Quick Actions</CardTitle>
+                                                                    <CardDescription>
+                                                                        Common tasks and operations for your radio.
+                                                                    </CardDescription>
+                                                                </CardHeader>
+                                                                <CardContent className="space-y-2">
+                                                                    <Button variant="outline" className="w-full justify-between">
+                                                                        Backup Calibration
+                                                                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                                    </Button>
+                                                                    <Button variant="outline" className="w-full justify-between">
+                                                                        Export Memory Channel CSV
+                                                                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                                    </Button>
+                                                                    <Button variant="outline" className="w-full justify-between">
+                                                                        Factory Reset
+                                                                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                                    </Button>
+                                                                </CardContent>
+                                                            </Card>
+                                                        </div>
                                                     </div>
-                                                </Card>
-                                                <Card className="lg:col-span-2">
-                                                    <CardHeader>
-                                                        <CardTitle>Keypad</CardTitle>
-                                                    </CardHeader>
-                                                    <CardContent>
-                                                        <div className="grid grid-cols-3 gap-2">
-                                                            {['M', '▲', 'E', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((k) => (
-                                                                <Button key={k} variant="outline" size="sm" className="font-mono text-xs">{k}</Button>
-                                                            ))}
-                                                            <Button variant="destructive" className="col-span-3 mt-2">PTT</Button>
-                                                        </div>
-                                                    </CardContent>
-                                                </Card>
+                                                )}
+
+                                                {currentView === 'flasher' && (
+                                                    <FlasherView connected={connected} onConnect={handleConnect} onBusyChange={setIsBusy} />
+                                                )}
+
+                                                {currentView === 'memories' && (
+                                                    <Card>
+                                                        <CardContent className="p-0">
+                                                            <Table>
+                                                                <TableHeader>
+                                                                    <TableRow>
+                                                                        <TableHead className="w-[80px]">CH</TableHead>
+                                                                        <TableHead>Name</TableHead>
+                                                                        <TableHead>Frequency</TableHead>
+                                                                        <TableHead>Modulation</TableHead>
+                                                                        <TableHead className="text-right">Action</TableHead>
+                                                                    </TableRow>
+                                                                </TableHeader>
+                                                                <TableBody>
+                                                                    <TableRow>
+                                                                        <TableCell className="font-mono font-medium">001</TableCell>
+                                                                        <TableCell>Local Repeater</TableCell>
+                                                                        <TableCell className="font-mono text-muted-foreground">145.600</TableCell>
+                                                                        <TableCell><Badge variant="secondary">FM</Badge></TableCell>
+                                                                        <TableCell className="text-right">
+                                                                            <Button variant="ghost" size="sm">Edit</Button>
+                                                                        </TableCell>
+                                                                    </TableRow>
+                                                                    <TableRow>
+                                                                        <TableCell className="font-mono font-medium">002</TableCell>
+                                                                        <TableCell>Simplex Call</TableCell>
+                                                                        <TableCell className="font-mono text-muted-foreground">145.500</TableCell>
+                                                                        <TableCell><Badge variant="secondary">FM</Badge></TableCell>
+                                                                        <TableCell className="text-right">
+                                                                            <Button variant="ghost" size="sm">Edit</Button>
+                                                                        </TableCell>
+                                                                    </TableRow>
+                                                                </TableBody>
+                                                            </Table>
+                                                        </CardContent>
+                                                    </Card>
+                                                )}
+
+                                                {currentView === 'remote' && (
+                                                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7 ">
+                                                        <Card className="lg:col-span-5 bg-zinc-950 dark:border-zinc-800">
+                                                            <div className="aspect-video w-full flex items-center justify-center relative overflow-hidden bg-zinc-950 rounded-lg">
+                                                                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-zinc-950 to-black opacity-80" />
+                                                                <div className="text-center space-y-2 relative z-10">
+                                                                    <div className="text-6xl font-mono font-bold text-emerald-500 tracking-tighter drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]">
+                                                                        145.600
+                                                                    </div>
+                                                                    <div className="flex justify-center space-x-2">
+                                                                        <Badge variant="outline" className="border-emerald-500/50 text-emerald-500">RX</Badge>
+                                                                        <Badge variant="outline" className="border-zinc-700 text-zinc-500">FM</Badge>
+                                                                    </div>
+                                                                </div>
+                                                                {/* Scanlines effect overlay */}
+                                                                <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,3px_100%] pointer-events-none" />
+                                                            </div>
+                                                        </Card>
+                                                        <Card className="lg:col-span-2">
+                                                            <CardHeader>
+                                                                <CardTitle>Keypad</CardTitle>
+                                                            </CardHeader>
+                                                            <CardContent>
+                                                                <div className="grid grid-cols-3 gap-2">
+                                                                    {['M', '▲', 'E', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((k) => (
+                                                                        <Button key={k} variant="outline" size="sm" className="font-mono text-xs">{k}</Button>
+                                                                    ))}
+                                                                    <Button variant="destructive" className="col-span-3 mt-2">PTT</Button>
+                                                                </div>
+                                                            </CardContent>
+                                                        </Card>
+                                                    </div>
+                                                )}
+
+                                                {currentView === 'console' && (
+                                                    <ConsoleView logs={consoleLogs} connected={connected} onClear={() => setConsoleLogs([])} />
+                                                )}
+
+                                                {currentView === 'calib' && (
+                                                    <CalibrationView connected={connected} onConnect={handleConnect} onBusyChange={setIsBusy} />
+                                                )}
+
+                                                {currentView === 'config' && (
+                                                    <SettingsView />
+                                                )}
                                             </div>
-                                        )}
-
-                                        {currentView === 'console' && (
-                                            <ConsoleView logs={consoleLogs} onClear={() => setConsoleLogs([])} />
-                                        )}
-
-                                        {currentView === 'calib' && (
-                                            <CalibrationView onBusyChange={setIsBusy} />
-                                        )}
-
-                                        {currentView === 'config' && (
-                                            <SettingsView />
-                                        )}
+                                        </div>
                                     </div>
                                 </div>
                             </ContextMenuTrigger>

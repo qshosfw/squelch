@@ -80,6 +80,22 @@ function arrayToHex(arr: Uint8Array | number[]): string {
 }
 
 // ============================================================================
+// Serial Stats Interface
+// ============================================================================
+
+export interface SerialStats {
+    connectedAt: number | null;
+    bytesSent: number;
+    bytesReceived: number;
+    packetsSent: number;
+    packetsReceived: number;
+    lastTxTime: number | null;
+    lastRxTime: number | null;
+    avgLatencyMs: number;
+    latencySamples: number[];
+}
+
+// ============================================================================
 // Protocol Class
 // ============================================================================
 
@@ -91,11 +107,25 @@ export class Protocol {
     private readBuffer: number[] = [];
     private _skipDfuWait = false;
 
+    // Serial Stats
+    private _stats: SerialStats = {
+        connectedAt: null,
+        bytesSent: 0,
+        bytesReceived: 0,
+        packetsSent: 0,
+        packetsReceived: 0,
+        lastTxTime: null,
+        lastRxTime: null,
+        avgLatencyMs: 0,
+        latencySamples: []
+    };
+
     // Callbacks
     public onLog: ((msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx') => void) | null = null;
     public onProgress: ((percent: number) => void) | null = null;
     public onStepChange: ((step: string) => void) | null = null;
     public onStatusChange: ((connected: boolean, error?: string) => void) | null = null;
+    public onStatsUpdate: ((stats: SerialStats) => void) | null = null;
 
     private log(msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx' = 'info') {
         if (this.onLog) this.onLog(msg, type);
@@ -103,6 +133,59 @@ export class Protocol {
 
     public skipWaiting() {
         this._skipDfuWait = true;
+    }
+
+    public get stats(): SerialStats {
+        return { ...this._stats };
+    }
+
+    public get connectionDuration(): number {
+        if (!this._stats.connectedAt) return 0;
+        return Date.now() - this._stats.connectedAt;
+    }
+
+    private resetStats() {
+        this._stats = {
+            connectedAt: Date.now(),
+            bytesSent: 0,
+            bytesReceived: 0,
+            packetsSent: 0,
+            packetsReceived: 0,
+            lastTxTime: null,
+            lastRxTime: null,
+            avgLatencyMs: 0,
+            latencySamples: []
+        };
+    }
+
+    private recordTx(bytes: number) {
+        this._stats.bytesSent += bytes;
+        this._stats.packetsSent++;
+        this._stats.lastTxTime = Date.now();
+        if (this.onStatsUpdate) this.onStatsUpdate(this.stats);
+    }
+
+    private recordRx(bytes: number) {
+        this._stats.bytesReceived += bytes;
+        this._stats.packetsReceived++;
+        const now = Date.now();
+
+        // Calculate latency if we have a recent TX
+        if (this._stats.lastTxTime && (now - this._stats.lastTxTime) < 5000) {
+            const latency = now - this._stats.lastTxTime;
+            this._stats.latencySamples.push(latency);
+            // Keep only last 20 samples
+            if (this._stats.latencySamples.length > 20) {
+                this._stats.latencySamples.shift();
+            }
+            // Calculate average
+            this._stats.avgLatencyMs = Math.round(
+                this._stats.latencySamples.reduce((a, b) => a + b, 0) / this._stats.latencySamples.length
+            );
+        }
+
+        this._stats.lastRxTime = now;
+        if (this.onStatsUpdate) this.onStatsUpdate(this.stats);
     }
 
     // ========================================================================
@@ -128,6 +211,7 @@ export class Protocol {
             this.writer = this.port.writable.getWriter();
             this.isConnected = true;
             this.readBuffer = [];
+            this.resetStats();
 
             this.readLoop();
 
@@ -190,10 +274,11 @@ export class Protocol {
                     }
                     break;
                 }
-                if (value) {
+                if (value && value.length > 0) {
                     for (let i = 0; i < value.length; i++) {
                         this.readBuffer.push(value[i]);
                     }
+                    this._stats.bytesReceived += value.length;
                 }
             } catch (e: any) {
                 if (this.isConnected) {
@@ -307,6 +392,7 @@ export class Protocol {
         const data = msgBuf.slice(4);
 
         buf.splice(0, packEnd + 2);
+        this.recordRx(packEnd + 2 - packBegin);
         return { msgType, data };
     }
 
@@ -316,6 +402,7 @@ export class Protocol {
         const packet = this.makePacket(msg);
         this.log(`TX: ${arrayToHex(packet)}`, 'tx');
         await this.writer.write(packet);
+        this.recordTx(packet.length);
     }
 
     public async sendRaw(data: Uint8Array) {

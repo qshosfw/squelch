@@ -35,14 +35,14 @@ export function TopMenuBar({
                     <MenubarTrigger className="font-normal text-sm">File</MenubarTrigger>
                     <MenubarContent>
                         <MenubarItem onClick={onImportFirmware}>
-                            Import Firmware & Flash <MenubarShortcut>⌘O</MenubarShortcut>
+                            Import binary & flash <MenubarShortcut>⌘O</MenubarShortcut>
                         </MenubarItem>
                         <MenubarSeparator />
                         <MenubarItem onClick={onBackupCalibration}>
-                            Export Calibration
+                            Export calibration
                         </MenubarItem>
                         <MenubarItem onClick={onRestoreCalibration}>
-                            Restore Calibration
+                            Restore calibration
                         </MenubarItem>
                     </MenubarContent>
                 </MenubarMenu>

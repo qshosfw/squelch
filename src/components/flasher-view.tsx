@@ -1,35 +1,38 @@
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Progress } from "@/components/ui/progress"
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Zap, AlertCircle, Loader2, Terminal, Download, Github, Plus, ArrowLeft } from "lucide-react"
-import { protocol } from "@/lib/protocol"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Zap, AlertCircle, Loader2, Download, Github, Plus, ArrowLeft, FileCode } from "lucide-react"
+import { protocol, SerialStats } from "@/lib/protocol"
 import { useToast } from "@/hooks/use-toast"
 import { useState, useRef, useEffect } from "react"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { FlashProgressDialog, LogEntry } from "./flash-progress-dialog"
 import { cn } from "@/lib/utils"
 import { GitHubService, GitHubRepo, GitHubRelease, GitHubAsset } from "@/lib/github"
 import { FIRMWARE_REPOS } from "@/constants"
 import { usePreferences } from "@/contexts/PreferencesContext"
 import ReactMarkdown from 'react-markdown'
 
-interface LogEntry {
-    time: string;
-    message: string;
-    type: 'info' | 'success' | 'error' | 'warning';
-}
 
-export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean) => void }) {
+
+
+export function FlasherView({ connected, onConnect, onBusyChange }: {
+    connected: boolean,
+    onConnect: () => Promise<boolean>,
+    onBusyChange?: (isBusy: boolean) => void
+}) {
     const { toast } = useToast()
     const { githubToken, customRepos, addCustomRepo } = usePreferences()
 
-    // GitHub Service Instance with Token
-    // We recreate it if token changes to ensure it picks up the new token.
+    // GitHub Service
     const [ghService, setGhService] = useState(() => new GitHubService(githubToken))
 
     useEffect(() => {
@@ -42,8 +45,9 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
     const [progress, setProgress] = useState(0)
     const [statusMessage, setStatusMessage] = useState("")
     const [logs, setLogs] = useState<LogEntry[]>([])
-    const [showLogs, setShowLogs] = useState(true)
     const [isDialogOpen, setIsDialogOpen] = useState(false)
+    const [flashResult, setFlashResult] = useState<'success' | 'error' | null>(null)
+    const [stats, setStats] = useState<SerialStats | null>(null)
 
     // UI State
     const [activeTab, setActiveTab] = useState("local")
@@ -99,7 +103,6 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
         }
         addCustomRepo(newRepoInput);
         setNewRepoInput("");
-        // Trigger fetch
         setTimeout(fetchRepos, 100);
     }
 
@@ -117,7 +120,6 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
     }
 
     const handleDownloadAsset = (asset: GitHubAsset) => {
-        // Trigger download
         const link = document.createElement('a');
         link.href = asset.browser_download_url;
         link.download = asset.name;
@@ -134,7 +136,9 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
     const addLog = (msg: string, type: LogEntry['type'] = 'info') => {
         const time = new Date().toLocaleTimeString();
         setLogs(prev => [...prev, { time, message: msg, type }]);
-        setStatusMessage(msg);
+        if (type !== 'tx' && type !== 'rx') {
+            setStatusMessage(msg);
+        }
     }
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -150,15 +154,23 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
             return
         }
 
+        if (!connected) {
+            toast({ title: "Connection Required", description: "Please connect to your radio before flashing." })
+            const success = await onConnect();
+            if (!success) return;
+        }
+
         setIsFlashing(true)
         setIsDialogOpen(true)
         setProgress(0)
         setLogs([])
+        setFlashResult(null)
         addLog("Initializing flashing process...", "info")
         onBusyChange?.(true)
 
-        protocol.onProgress = (pct) => setProgress(pct);
-        protocol.onLog = (msg, type) => addLog(msg, type as any);
+        protocol.onProgress = (pct: number) => setProgress(pct);
+        protocol.onLog = (msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx') => addLog(msg, type as any);
+        protocol.onStatsUpdate = (s: SerialStats) => setStats(s);
 
         try {
             const buffer = await file.arrayBuffer()
@@ -168,122 +180,175 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
 
             addLog("Flash successfully completed.", "success")
             toast({ title: "Flash Complete", description: "Firmware updated successfully." })
+            setFlashResult('success')
         } catch (error: any) {
             addLog(`Error: ${error.message}`, "error")
+            toast({ variant: "destructive", title: "Flash Failed", description: error.message })
+            setFlashResult('error')
         } finally {
             setIsFlashing(false)
             onBusyChange?.(false)
             protocol.onProgress = null;
             protocol.onLog = null;
+            protocol.onStatsUpdate = null;
         }
     }
 
     return (
-        <>
+        <div className="flex flex-col gap-6 lg:max-w-5xl lg:mx-auto">
+            {/* Disclaimer */}
+            <Alert variant="default" className="bg-cyan-500/10 border-cyan-500/20 text-cyan-700 dark:text-cyan-300">
+                <AlertCircle className="h-4 w-4 text-cyan-500" />
+                <AlertDescription className="text-sm">
+                    Ensure the radio is in DFU mode by holding the <strong>PTT button</strong> while turning on the radio. The flashlight will turn on once the radio is in DFU mode.
+                </AlertDescription>
+            </Alert>
+
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
+                <TabsList className="grid w-full grid-cols-2 mb-4">
                     <TabsTrigger value="local">Local File</TabsTrigger>
                     <TabsTrigger value="online">Community Firmware</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="local">
+                <TabsContent value="local" className="space-y-4">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Flash Firmware from File</CardTitle>
-                            <CardDescription>Select a firmware file (.bin) from your computer.</CardDescription>
+                            <CardTitle className="flex items-center gap-2">
+                                <div className="p-2 rounded-lg bg-primary/10">
+                                    <FileCode className="h-5 w-5 text-primary" />
+                                </div>
+                                Flash from File
+                            </CardTitle>
+                            <CardDescription>Select a .bin firmware file from your computer.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-6">
                             {manualDownloadHint && (
-                                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-800 dark:bg-blue-950/50 dark:border-blue-900 dark:text-blue-200 animate-in slide-in-from-top-2">
-                                    <div className="flex items-start gap-3">
-                                        <Download className="h-5 w-5 mt-0.5" />
-                                        <div>
-                                            <p className="font-semibold">Download Initiated</p>
-                                            <p className="text-sm mt-1">
-                                                We've started downloading <strong>{manualDownloadHint}</strong>.
-                                                Please find it in your downloads folder and select it below.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
+                                <Alert className="bg-emerald-500/10 border-emerald-500/20">
+                                    <Download className="h-4 w-4 text-emerald-500" />
+                                    <AlertTitle className="text-emerald-700 dark:text-emerald-400">Download Initiated</AlertTitle>
+                                    <AlertDescription className="text-emerald-600 dark:text-emerald-500 text-sm">
+                                        We've started downloading <strong>{manualDownloadHint}</strong>.
+                                        Please select it below once the download finishes.
+                                    </AlertDescription>
+                                </Alert>
                             )}
 
                             <div className="grid w-full gap-4">
-                                <div className="flex flex-col gap-2">
-                                    <label className="text-sm font-medium">Firmware File</label>
-                                    <Input
-                                        type="file"
-                                        accept=".bin"
-                                        onChange={handleFileChange}
-                                        disabled={isFlashing}
-                                        className="h-12 pt-2"
-                                    />
-                                    <div className="text-xs text-muted-foreground">
-                                        {file ? `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)` : "Supports .bin files"}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-center w-full">
+                                        <label htmlFor="dropzone-file" className={cn(
+                                            "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-muted/50 transition-colors",
+                                            file ? "border-primary bg-primary/5" : "border-muted-foreground/25"
+                                        )}>
+                                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                                {file ? (
+                                                    <>
+                                                        <FileCode className="w-8 h-8 mb-3 text-primary" />
+                                                        <p className="mb-1 text-sm text-foreground font-medium">{file.name}</p>
+                                                        <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Download className="w-8 h-8 mb-3 text-muted-foreground" />
+                                                        <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
+                                                        <p className="text-xs text-muted-foreground">Firmware Binary (.bin)</p>
+                                                    </>
+                                                )}
+                                            </div>
+                                            <Input
+                                                id="dropzone-file"
+                                                type="file"
+                                                accept=".bin"
+                                                className="hidden"
+                                                onChange={handleFileChange}
+                                                disabled={isFlashing}
+                                            />
+                                        </label>
                                     </div>
                                 </div>
                             </div>
-
-                            <div className="flex justify-end">
-                                <Button onClick={startFlash} disabled={isFlashing || !file}>
-                                    <Zap className="mr-2 h-4 w-4" />
-                                    Begin Flash
-                                </Button>
-                            </div>
                         </CardContent>
+                        <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 p-4">
+                            <Button
+                                size="lg"
+                                onClick={startFlash}
+                                disabled={isFlashing || !file}
+                                className="w-full md:w-auto"
+                            >
+                                {isFlashing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                                Flash Firmware
+                            </Button>
+                        </CardFooter>
                     </Card>
                 </TabsContent>
 
-                <TabsContent value="online">
-                    <Card className="min-h-[400px]">
+                <TabsContent value="online" className="space-y-4">
+                    <Card className="min-h-[500px]">
                         {!selectedRepo ? (
                             <>
-                                <CardHeader className="flex flex-row items-center justify-between">
-                                    <div className="space-y-1.5">
-                                        <div className="flex items-center gap-2">
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-7">
+                                    <div className="space-y-1">
+                                        <CardTitle className="flex items-center gap-2">
                                             <Github className="h-5 w-5" />
-                                            <CardTitle>Community Repositories</CardTitle>
-                                        </div>
-                                        <CardDescription>Browse and flash firmware from the community.</CardDescription>
+                                            Community Repositories
+                                        </CardTitle>
+                                        <CardDescription>Browse and download firmware from the community.</CardDescription>
                                     </div>
-                                </CardHeader>
-                                <CardContent className="space-y-4">
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 w-full max-w-sm">
                                         <Input
-                                            placeholder="Add repo (username/repo)..."
+                                            placeholder="Add 'user/repo'..."
                                             value={newRepoInput}
                                             onChange={(e) => setNewRepoInput(e.target.value)}
                                             onKeyDown={(e) => e.key === 'Enter' && handleAddRepo()}
+                                            className="h-9"
                                         />
-                                        <Button size="icon" variant="outline" onClick={handleAddRepo}>
+                                        <Button size="sm" variant="outline" onClick={handleAddRepo}>
                                             <Plus className="h-4 w-4" />
                                         </Button>
                                     </div>
-
+                                </CardHeader>
+                                <CardContent>
                                     {isLoadingRepos ? (
-                                        <div className="flex justify-center py-8"><Loader2 className="animate-spin" /></div>
+                                        <div className="space-y-3">
+                                            {[1, 2, 3].map(i => (
+                                                <div key={i} className="flex items-center space-x-4">
+                                                    <Skeleton className="h-12 w-12 rounded-full" />
+                                                    <div className="space-y-2">
+                                                        <Skeleton className="h-4 w-[250px]" />
+                                                        <Skeleton className="h-4 w-[200px]" />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
                                     ) : (
-                                        <div className="grid gap-3">
+                                        <div className="grid gap-3 md:grid-cols-2">
                                             {repos.map(repo => (
                                                 <div
                                                     key={repo.id}
-                                                    className="flex items-center gap-4 p-3 rounded-lg border hover:bg-muted/50 cursor-pointer transition-colors"
+                                                    className="group flex items-start gap-4 p-4 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all cursor-pointer"
                                                     onClick={() => handleSelectRepo(repo)}
                                                 >
-                                                    <Avatar>
+                                                    <Avatar className="h-10 w-10 border">
                                                         <AvatarImage src={repo.owner.avatar_url} />
                                                         <AvatarFallback>{repo.owner.login.substring(0, 2).toUpperCase()}</AvatarFallback>
                                                     </Avatar>
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="font-semibold flex items-center gap-2">
-                                                            {repo.name}
-                                                            <Badge variant="outline" className="text-[10px] font-normal">{repo.owner.login}</Badge>
+                                                    <div className="flex-1 min-w-0 space-y-1">
+                                                        <div className="font-semibold flex items-center justify-between">
+                                                            <span className="truncate">{repo.name}</span>
+                                                            <Badge variant="secondary" className="text-[10px] font-normal group-hover:bg-background transition-colors">
+                                                                {repo.owner.login}
+                                                            </Badge>
                                                         </div>
-                                                        <div className="text-xs text-muted-foreground truncate">{repo.description}</div>
+                                                        <p className="text-xs text-muted-foreground line-clamp-2">
+                                                            {repo.description || "No description provided."}
+                                                        </p>
+                                                        <div className="flex items-center gap-2 pt-2 text-[10px] text-muted-foreground">
+                                                            <span className="flex items-center gap-1">
+                                                                <Zap className="h-3 w-3" />
+                                                                {repo.stargazers_count} stars
+                                                            </span>
+                                                        </div>
                                                     </div>
-                                                    <Button variant="ghost" size="icon">
-                                                        <ArrowLeft className="h-4 w-4 rotate-180" />
-                                                    </Button>
                                                 </div>
                                             ))}
                                         </div>
@@ -292,82 +357,104 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
                             </>
                         ) : (
                             <>
-                                <CardHeader>
+                                <div className="border-b px-6 py-4 flex items-center gap-4 bg-muted/20">
                                     <Button
                                         variant="ghost"
-                                        className="w-fit -ml-2 mb-2 h-8 px-2"
+                                        size="sm"
+                                        className="-ml-2"
                                         onClick={() => setSelectedRepo(null)}
                                     >
-                                        <ArrowLeft className="mr-1 h-4 w-4" /> Back to List
+                                        <ArrowLeft className="mr-2 h-4 w-4" /> Back
                                     </Button>
+                                    <Separator orientation="vertical" className="h-6" />
                                     <div className="flex items-center gap-3">
-                                        <Avatar className="h-10 w-10">
+                                        <Avatar className="h-8 w-8">
                                             <AvatarImage src={selectedRepo.owner.avatar_url} />
                                             <AvatarFallback>?</AvatarFallback>
                                         </Avatar>
                                         <div>
-                                            <CardTitle>{selectedRepo.name}</CardTitle>
-                                            <CardDescription>{selectedRepo.full_name}</CardDescription>
+                                            <h3 className="text-sm font-semibold">{selectedRepo.name}</h3>
+                                            <p className="text-xs text-muted-foreground">{selectedRepo.full_name}</p>
                                         </div>
                                     </div>
-                                </CardHeader>
-                                <CardContent className="space-y-6">
+                                </div>
+
+                                <CardContent className="space-y-6 pt-6">
                                     {isLoadingReleases ? (
-                                        <div className="flex justify-center py-8"><Loader2 className="animate-spin" /></div>
+                                        <div className="flex items-center justify-center py-12">
+                                            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                                        </div>
                                     ) : releases.length === 0 ? (
-                                        <div className="text-center text-muted-foreground py-8">No releases found.</div>
+                                        <div className="text-center text-muted-foreground py-12 bg-muted/20 rounded-lg border border-dashed">
+                                            No releases found for this repository.
+                                        </div>
                                     ) : (
-                                        <>
-                                            <div className="space-y-2">
-                                                <label className="text-sm font-medium">Select Release</label>
-                                                <Select
-                                                    value={selectedRelease?.id.toString()}
-                                                    onValueChange={(val) => setSelectedRelease(releases.find(r => r.id.toString() === val) || null)}
-                                                >
-                                                    <SelectTrigger>
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {releases.map(r => (
-                                                            <SelectItem key={r.id} value={r.id.toString()}>
-                                                                {r.name || r.tag_name} {r.prerelease ? '(Beta)' : ''}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            {selectedRelease && (
-                                                <div className="space-y-4 animate-in fade-in">
-                                                    <ScrollArea className="h-64 rounded-md border p-4 text-sm text-muted-foreground">
-                                                        <div className="prose prose-sm dark:prose-invert max-w-none">
-                                                            <ReactMarkdown>{selectedRelease.body || "*No release notes provided.*"}</ReactMarkdown>
-                                                        </div>
-                                                    </ScrollArea>
-
-                                                    <div className="space-y-2">
-                                                        <label className="text-sm font-medium">Assets</label>
-                                                        <div className="grid gap-2">
-                                                            {selectedRelease.assets.filter(a => a.name.endsWith('.bin')).map(asset => (
-                                                                <div key={asset.id} className="flex items-center justify-between p-3 rounded-md border bg-secondary/20">
-                                                                    <div className="flex flex-col">
-                                                                        <span className="font-mono text-sm">{asset.name}</span>
-                                                                        <span className="text-xs text-muted-foreground">{(asset.size / 1024).toFixed(1)} KB</span>
+                                        <div className="grid gap-6 lg:grid-cols-3">
+                                            {/* Release Selection & Info */}
+                                            <div className="lg:col-span-1 space-y-4">
+                                                <div className="space-y-2">
+                                                    <label className="text-sm font-medium">Select Version</label>
+                                                    <Select
+                                                        value={selectedRelease?.id.toString()}
+                                                        onValueChange={(val) => setSelectedRelease(releases.find(r => r.id.toString() === val) || null)}
+                                                    >
+                                                        <SelectTrigger>
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {releases.map(r => (
+                                                                <SelectItem key={r.id} value={r.id.toString()}>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span>{r.tag_name}</span>
+                                                                        {r.prerelease && <Badge variant="outline" className="text-[10px] h-4">Beta</Badge>}
                                                                     </div>
-                                                                    <Button size="sm" variant="secondary" onClick={() => handleDownloadAsset(asset)}>
-                                                                        <Download className="mr-2 h-3 w-3" />
-                                                                        Download
-                                                                    </Button>
-                                                                </div>
+                                                                </SelectItem>
                                                             ))}
-                                                            {selectedRelease.assets.filter(a => a.name.endsWith('.bin')).length === 0 && (
-                                                                <div className="text-sm text-muted-foreground italic">No .bin files in this release.</div>
-                                                            )}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+
+                                                {selectedRelease && (
+                                                    <div className="space-y-3 pt-4">
+                                                        <h4 className="text-sm font-medium flex items-center gap-2">
+                                                            <Download className="h-4 w-4" />
+                                                            Assets
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {selectedRelease.assets.filter(a => a.name.endsWith('.bin')).map(asset => (
+                                                                <Card key={asset.id} className="p-3 hover:bg-muted/50 transition-colors shadow-none border-dashed bg-transparent">
+                                                                    <div className="flex flex-col gap-2">
+                                                                        <div className="flex justify-between items-start">
+                                                                            <span className="font-mono text-xs font-medium break-all">{asset.name}</span>
+                                                                        </div>
+                                                                        <div className="flex items-center justify-between">
+                                                                            <span className="text-[10px] text-muted-foreground">{(asset.size / 1024).toFixed(1)} KB</span>
+                                                                            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => handleDownloadAsset(asset)}>
+                                                                                Download
+                                                                            </Button>
+                                                                        </div>
+                                                                    </div>
+                                                                </Card>
+                                                            ))}
                                                         </div>
                                                     </div>
-                                                </div>
-                                            )}
-                                        </>
+                                                )}
+                                            </div>
+
+                                            {/* Release Notes */}
+                                            <div className="lg:col-span-2">
+                                                <Card className="h-full border-none shadow-none bg-muted/20">
+                                                    <ScrollArea className="h-[400px] p-4">
+                                                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                                                            <h3>{selectedRelease?.name || selectedRelease?.tag_name}</h3>
+                                                            <ReactMarkdown>
+                                                                {selectedRelease?.body || "*No release notes provided.*"}
+                                                            </ReactMarkdown>
+                                                        </div>
+                                                    </ScrollArea>
+                                                </Card>
+                                            </div>
+                                        </div>
                                     )}
                                 </CardContent>
                             </>
@@ -376,81 +463,16 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
                 </TabsContent>
             </Tabs>
 
-            <Dialog open={isDialogOpen} onOpenChange={(open) => {
-                if (!isFlashing) setIsDialogOpen(open);
-            }}>
-                <DialogContent className="sm:max-w-2xl">
-                    <DialogHeader>
-                        <DialogTitle>Flashing Firmware</DialogTitle>
-                        <DialogDescription>
-                            Please do not disconnect your device.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                            <div className="flex justify-between text-sm font-medium">
-                                <span>{statusMessage}</span>
-                                <span>{Math.round(progress)}%</span>
-                            </div>
-                            <Progress value={progress} className="h-4" />
-                        </div>
-
-                        {isFlashing && progress === 0 && (
-                            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/50 dark:border-amber-900 dark:text-amber-200">
-                                <div className="font-semibold flex items-center gap-2">
-                                    <AlertCircle className="h-4 w-4" />
-                                    Wait for Device...
-                                </div>
-                                <div className="mt-1">
-                                    If your device is not detected, ensure it is OFF, then hold PTT and turn it ON.
-                                    The screen should remain blank and the flashlight on.
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="rounded-md border">
-                            <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b">
-                                <div className="flex items-center gap-2 text-sm font-medium">
-                                    <Terminal className="h-4 w-4" />
-                                    Execution Log
-                                </div>
-                                <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setShowLogs(!showLogs)}>
-                                    {showLogs ? "Hide" : "Show"}
-                                </Button>
-                            </div>
-                            {showLogs && (
-                                <ScrollArea className="h-[200px] w-full p-4 font-mono text-xs">
-                                    <div className="space-y-1">
-                                        {logs.map((log, i) => (
-                                            <div key={i} className={cn(
-                                                "flex gap-2",
-                                                log.type === 'error' ? "text-red-500" :
-                                                    log.type === 'success' ? "text-green-500" :
-                                                        log.type === 'warning' ? "text-amber-500" : "text-muted-foreground"
-                                            )}>
-                                                <span className="opacity-50 select-none">[{log.time}]</span>
-                                                <span>{log.message}</span>
-                                            </div>
-                                        ))}
-                                        <div ref={logEndRef} />
-                                    </div>
-                                </ScrollArea>
-                            )}
-                        </div>
-                    </div>
-
-                    <DialogFooter>
-                        <Button
-                            variant="secondary"
-                            onClick={() => setIsDialogOpen(false)}
-                            disabled={isFlashing}
-                        >
-                            Close
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </>
+            <FlashProgressDialog
+                isOpen={isDialogOpen}
+                onOpenChange={setIsDialogOpen}
+                isFlashing={isFlashing}
+                progress={progress}
+                statusMessage={statusMessage}
+                logs={logs}
+                stats={stats}
+                flashResult={flashResult}
+            />
+        </div>
     )
 }

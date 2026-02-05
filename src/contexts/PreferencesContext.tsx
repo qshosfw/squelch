@@ -5,6 +5,7 @@ interface Preferences {
     customRepos: string[];
     bootloaderDetected: boolean;
     autoConnect: boolean;
+    enableBackupCache: boolean;
 }
 
 interface PreferencesContextType extends Preferences {
@@ -13,6 +14,7 @@ interface PreferencesContextType extends Preferences {
     removeCustomRepo: (repo: string) => void;
     setBootloaderDetected: (detected: boolean) => void;
     setAutoConnect: (enabled: boolean) => void;
+    setEnableBackupCache: (enabled: boolean) => void;
 }
 
 const defaultPreferences: Preferences = {
@@ -20,6 +22,7 @@ const defaultPreferences: Preferences = {
     customRepos: [],
     bootloaderDetected: false,
     autoConnect: false,
+    enableBackupCache: true,
 };
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
@@ -60,6 +63,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         setPreferences(prev => ({ ...prev, autoConnect: enabled }));
     };
 
+    const setEnableBackupCache = (enabled: boolean) => {
+        setPreferences(prev => ({ ...prev, enableBackupCache: enabled }));
+    };
+
     return (
         <PreferencesContext.Provider value={{
             ...preferences,
@@ -67,7 +74,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
             addCustomRepo,
             removeCustomRepo,
             setBootloaderDetected,
-            setAutoConnect
+            setAutoConnect,
+            setEnableBackupCache
         }}>
             {children}
         </PreferencesContext.Provider>

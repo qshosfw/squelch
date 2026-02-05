@@ -12,6 +12,7 @@ export interface GitHubRepo {
     owner: GitHubUser;
     html_url: string;
     latest_release_tag?: string;
+    stargazers_count: number;
 }
 
 export interface GitHubAsset {

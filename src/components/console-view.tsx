@@ -22,10 +22,11 @@ export interface LogMessage {
 
 interface ConsoleViewProps {
     logs: LogMessage[];
+    connected: boolean;
     onClear: () => void;
 }
 
-export function ConsoleView({ logs, onClear }: ConsoleViewProps) {
+export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
     // const [logs, setLogs] = useState<LogMessage[]>([]); // Removed internal state
     const [input, setInput] = useState('');
     const [inputType, setInputType] = useState('text'); // text, hex
@@ -134,8 +135,8 @@ export function ConsoleView({ logs, onClear }: ConsoleViewProps) {
                 </div>
             </div>
 
-            <ScrollArea className="flex-1 p-4 font-mono text-xs" ref={scrollRef}>
-                <div className="space-y-1">
+            <ScrollArea className="flex-1 font-mono text-xs" ref={scrollRef}>
+                <div className="p-4 space-y-1">
                     {logs.length === 0 && (
                         <div className="text-center text-muted-foreground py-10 opacity-50">
                             No logs to display
@@ -182,10 +183,11 @@ export function ConsoleView({ logs, onClear }: ConsoleViewProps) {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder={inputType === 'hex' ? "e.g. AB CD 01 23" : "Type a command..."}
+                        placeholder={!connected ? "Connect to device to send commands..." : (inputType === 'hex' ? "e.g. AB CD 01 23" : "Type a command...")}
                         className="font-mono"
+                        disabled={!connected}
                     />
-                    <Button onClick={handleSend} disabled={!input}>
+                    <Button onClick={handleSend} disabled={!input || !connected}>
                         <Send className="h-4 w-4" />
                     </Button>
                 </div>
