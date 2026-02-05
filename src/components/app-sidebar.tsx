@@ -28,6 +28,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 
 import type { PortInfo } from "@/lib/protocol"
+import { type RadioProfile } from "@/lib/framework/module-interface"
+import { ModuleManager } from "@/lib/framework/module-manager"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
     connected: boolean
@@ -41,7 +45,9 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
         version?: string;
         portInfo?: PortInfo;
     }
+    activeProfile?: RadioProfile | null
 }
+
 
 export function AppSidebar({
     className,
@@ -52,8 +58,14 @@ export function AppSidebar({
     setCurrentView,
     isCollapsed,
     setIsCollapsed,
-    deviceInfo
+    deviceInfo,
+    activeProfile
 }: SidebarProps) {
+    const allProfiles = ModuleManager.getProfiles();
+    const handleProfileChange = (id: string) => {
+        const p = allProfiles.find(x => x.id === id);
+        if (p) ModuleManager.setActiveProfile(p);
+    };
 
     const NavItem = ({ icon: Icon, label, value, shortcut, badge }: { icon: any, label: string, value: string, shortcut?: string, badge?: string }) => {
         const isSelected = currentView === value
@@ -164,6 +176,17 @@ export function AppSidebar({
                     <NavItem icon={Database} label="Memories" value="memories" shortcut="⌘2" badge="WIP" />
                     <NavItem icon={ArrowUpCircle} label="Flasher" value="flasher" shortcut="⌘3" />
                     <NavItem icon={Radio} label="Remote" value="remote" shortcut="⌘4" badge="WIP" />
+
+                    {/* Custom Pages from Active Profile */}
+                    {activeProfile?.customPages?.map((page) => (
+                        <NavItem
+                            key={page.id}
+                            icon={page.icon || Square}
+                            label={page.label}
+                            value={page.id}
+                        />
+                    ))}
+
                     <NavItem icon={Settings} label="Configuration" value="config" shortcut="⌘5" />
                     <NavItem icon={Terminal} label="Console" value="console" shortcut="⌘6" />
                     <NavItem icon={FileCode} label="Calibration" value="calib" />
@@ -217,6 +240,27 @@ export function AppSidebar({
                                                 )}
                                             </div>
                                         )}
+
+                                        {/* Profile Selector */}
+                                        {connected && (
+                                            <div className="pt-2 mt-2 border-t space-y-1">
+                                                <div className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wider">
+                                                    Active Profile
+                                                </div>
+                                                <Select value={activeProfile?.id || ""} onValueChange={handleProfileChange}>
+                                                    <SelectTrigger className="h-7 text-xs bg-background">
+                                                        <SelectValue placeholder="Select Profile..." />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {allProfiles.map(p => (
+                                                            <SelectItem key={p.id} value={p.id} className="text-xs">
+                                                                {p.name}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        )}
                                     </>
                                 ) : (
                                     <div className="text-center text-muted-foreground py-2">
@@ -227,7 +271,7 @@ export function AppSidebar({
                         </CollapsibleContent>
                     </Collapsible>
                 </div>
-            </ScrollArea>
-        </div>
+            </ScrollArea >
+        </div >
     )
 }

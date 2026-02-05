@@ -6,6 +6,8 @@ interface Preferences {
     bootloaderDetected: boolean;
     autoConnect: boolean;
     enableBackupCache: boolean;
+    profileSwitchMode: 'auto' | 'prompt' | 'manual';
+    calibrationOffsetLegacy: boolean; // Optional: future proofing
 }
 
 interface PreferencesContextType extends Preferences {
@@ -15,6 +17,7 @@ interface PreferencesContextType extends Preferences {
     setBootloaderDetected: (detected: boolean) => void;
     setAutoConnect: (enabled: boolean) => void;
     setEnableBackupCache: (enabled: boolean) => void;
+    setProfileSwitchMode: (mode: 'auto' | 'prompt' | 'manual') => void;
 }
 
 const defaultPreferences: Preferences = {
@@ -23,6 +26,8 @@ const defaultPreferences: Preferences = {
     bootloaderDetected: false,
     autoConnect: false,
     enableBackupCache: true,
+    profileSwitchMode: 'auto',
+    calibrationOffsetLegacy: false
 };
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
@@ -67,6 +72,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         setPreferences(prev => ({ ...prev, enableBackupCache: enabled }));
     };
 
+    const setProfileSwitchMode = (mode: 'auto' | 'prompt' | 'manual') => {
+        setPreferences(prev => ({ ...prev, profileSwitchMode: mode }));
+    };
+
     return (
         <PreferencesContext.Provider value={{
             ...preferences,
@@ -75,7 +84,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
             removeCustomRepo,
             setBootloaderDetected,
             setAutoConnect,
-            setEnableBackupCache
+            setEnableBackupCache,
+            setProfileSwitchMode
         }}>
             {children}
         </PreferencesContext.Provider>

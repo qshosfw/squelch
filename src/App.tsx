@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Toaster } from "@/components/ui/toaster"
@@ -23,6 +24,8 @@ import { ComingSoonView } from "./components/coming-soon-view"
 import { Database, Radio as RadioIcon } from "lucide-react"
 import { PWAReloadPrompt } from "./components/pwa-reload-prompt"
 import { DynamicFavicon } from "./components/dynamic-favicon"
+import { ModuleManager } from "@/lib/framework/module-manager"
+import { type RadioProfile } from "@/lib/framework/module-interface"
 
 import { useTheme } from "@/components/theme-provider"
 
@@ -44,6 +47,11 @@ function App() {
     const [isBusy, setIsBusy] = useState(false)
     const [deviceInfo, setDeviceInfo] = useState<{ version: string, portInfo: PortInfo } | undefined>(undefined);
     const [isPreferencesOpen, setIsPreferencesOpen] = useState(false)
+    const [activeProfile, setActiveProfile] = useState<RadioProfile | null>(ModuleManager.getActiveProfile());
+
+    useEffect(() => {
+        return ModuleManager.subscribe(setActiveProfile);
+    }, []);
 
     // Fast Flash State
     const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -133,6 +141,22 @@ function App() {
                 const isBootloader = info.blVersion.startsWith("Bootloader")
                 setBootloaderDetected(isBootloader)
                 setDeviceInfo({ version: info.blVersion, portInfo });
+
+                // Detect Profile
+                const matchedProfile = ModuleManager.detectProfile(info.blVersion);
+                if (matchedProfile) {
+                    ModuleManager.setActiveProfile(matchedProfile);
+                    if (!silent) toast({ title: "Profile Activated", description: `Active: ${matchedProfile.name}` });
+                } else {
+                    // Fallback to stock or just stay null (selector allows manual pick)
+                    // Maybe default to Stock if we have no better idea, or let user pick.
+                    // For now, let's look for a generic "Stock" or first available if unknown?
+                    // Actually better to leave it null or keep previous?
+                    // Let's force Stock if nothing else matches, assuming Stock is basically "Basic Protocol".
+                    const stock = ModuleManager.detectProfile("stock"); // assuming stock matches "stock" or we can find by ID
+                    if (stock) ModuleManager.setActiveProfile(stock);
+                }
+
                 if (!silent) toast({ title: "Device Identified", description: `Version: ${info.blVersion}` })
             } catch (e) {
                 console.warn("Identification failed", e)
@@ -233,7 +257,7 @@ function App() {
             });
             setFlashStep("Failed");
             setFlashResult('error');
-            addLog(`Error: ${e.message}`, "error");
+            addLog(`Error: ${e.message} `, "error");
         } finally {
             clearTimeout(skipTimer);
             setIsFlashing(false);
@@ -414,6 +438,7 @@ function App() {
                         isCollapsed={isSidebarCollapsed}
                         setIsCollapsed={setIsSidebarCollapsed}
                         deviceInfo={deviceInfo}
+                        activeProfile={activeProfile}
                     />
 
                     <main className="flex-1 overflow-hidden bg-muted/10 relative flex flex-col">
@@ -526,6 +551,15 @@ function App() {
                                                 {currentView === 'config' && (
                                                     <SettingsView />
                                                 )}
+
+                                                {/* Render Active Profile Custom Pages */}
+                                                {activeProfile?.customPages?.map(page => {
+                                                    if (currentView === page.id) {
+                                                        const Component = page.component;
+                                                        return <Component key={page.id} />;
+                                                    }
+                                                    return null;
+                                                })}
                                             </div>
                                         </div>
                                     </div>

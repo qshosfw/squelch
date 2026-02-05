@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { usePreferences } from "@/contexts/PreferencesContext"
 import { useState, useEffect } from "react"
 import { ModeToggle } from "@/components/mode-toggle"
@@ -23,7 +24,9 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
         setAutoConnect,
         customRepos,
         addCustomRepo,
-        removeCustomRepo
+        removeCustomRepo,
+        profileSwitchMode,
+        setProfileSwitchMode
     } = usePreferences()
 
     const [localToken, setLocalToken] = useState(githubToken)
@@ -56,9 +59,10 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                 </DialogHeader>
 
                 <Tabs defaultValue="general" className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
+                    <TabsList className="grid w-full grid-cols-4">
                         <TabsTrigger value="general">General</TabsTrigger>
-                        <TabsTrigger value="firmware">Firmware</TabsTrigger>
+                        <TabsTrigger value="connection">Connect</TabsTrigger>
+                        <TabsTrigger value="profiles">Profiles</TabsTrigger>
                         <TabsTrigger value="developer">Developer</TabsTrigger>
                     </TabsList>
 
@@ -73,7 +77,10 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                             </div>
                             <ModeToggle />
                         </div>
-                        <Separator />
+                    </TabsContent>
+
+                    {/* Connection Settings */}
+                    <TabsContent value="connection" className="space-y-4 py-4">
                         <div className="flex items-center justify-between">
                             <div className="space-y-1">
                                 <Label className="text-base">Auto-Connect</Label>
@@ -83,10 +90,91 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                             </div>
                             <Switch checked={autoConnect} onCheckedChange={setAutoConnect} />
                         </div>
+                        <Separator />
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                                <Label className="text-base">Profile Switching</Label>
+                                <p className="text-sm text-muted-foreground">
+                                    How to handle different radio firmwares.
+                                </p>
+                            </div>
+                            <Select value={profileSwitchMode} onValueChange={(v: any) => setProfileSwitchMode(v)}>
+                                <SelectTrigger className="w-[180px]">
+                                    <SelectValue placeholder="Select mode" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="auto">Auto-Switch</SelectItem>
+                                    <SelectItem value="prompt">Ask Me</SelectItem>
+                                    <SelectItem value="manual">Manual Only</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </TabsContent>
 
-                    {/* Firmware Settings */}
-                    <TabsContent value="firmware" className="space-y-4 py-4">
+                    {/* Profiles Settings (New) */}
+                    <TabsContent value="profiles" className="space-y-4 py-4">
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="space-y-1">
+                                    <Label className="text-base">Installed Profiles</Label>
+                                    <p className="text-sm text-muted-foreground">
+                                        Manage firmware profiles and capabilities.
+                                    </p>
+                                </div>
+                                <Button size="sm" variant="outline" onClick={() => alert("Import Profile coming soon!")}>
+                                    Import .js
+                                </Button>
+                            </div>
+
+                            {/* Placeholder for Profile List */}
+                            <div className="rounded-md border p-4 bg-muted/20 text-center text-sm text-muted-foreground">
+                                <p>Stock UV-K5 (Built-in)</p>
+                                {/* We can map registered profiles here later */}
+                            </div>
+
+                            <Separator />
+
+                            <div className="space-y-3">
+                                <Label>Firmware Repositories (GitHub)</Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        placeholder="user/repo"
+                                        value={newRepo}
+                                        onChange={(e) => setNewRepo(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAddRepo()}
+                                    />
+                                    <Button onClick={handleAddRepo} variant="secondary">Add</Button>
+                                </div>
+                                <div className="rounded-md border p-2 h-32 overflow-y-auto space-y-1 bg-muted/30">
+                                    {customRepos.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                                            <Github className="h-8 w-8 opacity-20" />
+                                            <p className="text-xs">No custom repositories.</p>
+                                        </div>
+                                    ) : (
+                                        customRepos.map((repo) => (
+                                            <div key={repo} className="flex justify-between items-center text-sm bg-background border p-2 rounded shadow-sm group">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-mono">{repo}</span>
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 w-6 p-0 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    onClick={() => removeCustomRepo(repo)}
+                                                >
+                                                    &times;
+                                                </Button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </TabsContent>
+
+                    {/* Developer Settings */}
+                    <TabsContent value="developer" className="space-y-4 py-4">
                         <div className="space-y-3">
                             <Label>GitHub Personal Access Token</Label>
                             <div className="flex gap-2">
@@ -109,53 +197,13 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                                 </Button>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                Required for higher rate limits when fetching releases. We only need <code>public_repo</code> scope.
+                                Required for higher rate limits when fetching releases.
                             </p>
                         </div>
-                        <Separator />
-                        <div className="space-y-3">
-                            <Label>Custom Firmware Repositories</Label>
-                            <div className="flex gap-2">
-                                <Input
-                                    placeholder="user/repo"
-                                    value={newRepo}
-                                    onChange={(e) => setNewRepo(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleAddRepo()}
-                                />
-                                <Button onClick={handleAddRepo} variant="secondary">Add</Button>
-                            </div>
-                            <div className="rounded-md border p-2 h-40 overflow-y-auto space-y-1 bg-muted/30">
-                                {customRepos.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
-                                        <Github className="h-8 w-8 opacity-20" />
-                                        <p className="text-xs">No custom repositories added.</p>
-                                    </div>
-                                ) : (
-                                    customRepos.map((repo) => (
-                                        <div key={repo} className="flex justify-between items-center text-sm bg-background border p-2 rounded shadow-sm group">
-                                            <div className="flex items-center gap-2">
-                                                <div className="bg-primary/10 p-1.5 rounded-full text-primary">
-                                                    <Github className="h-3.5 w-3.5" />
-                                                </div>
-                                                <span className="font-mono">{repo}</span>
-                                            </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-6 w-6 p-0 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                                                onClick={() => removeCustomRepo(repo)}
-                                            >
-                                                &times;
-                                            </Button>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-                    </TabsContent>
 
-                    {/* Developer Settings */}
-                    <TabsContent value="developer" className="space-y-4 py-4">
+                        <Separator />
+
+
                         <div className="rounded-md bg-amber-500/10 p-4 border border-amber-500/20">
                             <div className="flex items-center gap-2 text-amber-500 font-semibold mb-2">
                                 <Terminal className="h-4 w-4" />

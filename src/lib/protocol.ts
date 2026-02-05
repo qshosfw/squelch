@@ -12,6 +12,13 @@
  * └─────────┴──────────┴─────────────────────────────────┴─────────┴─────────┘
  */
 
+import { ModuleManager } from './framework/module-manager';
+import { initializeModules } from '../modules';
+import { StockProfile } from '../modules/stock-module';
+
+// Initialize modules on load
+initializeModules();
+
 import {
     BAUDRATE,
     OBFUS_TBL,
@@ -103,7 +110,9 @@ export class Protocol {
     private port: any = null;
     private reader: ReadableStreamDefaultReader | null = null;
     private writer: WritableStreamDefaultWriter | null = null;
-    private isConnected = false;
+    private _isConnected = false;
+    public get isConnected() { return this._isConnected; }
+    private set isConnected(val: boolean) { this._isConnected = val; }
     private readBuffer: number[] = [];
     private _skipDfuWait = false;
 
@@ -243,9 +252,53 @@ export class Protocol {
         } catch (e) {
             console.warn("Disconnect cleanup error", e);
         }
-        this.reader = null;
-        this.writer = null;
-        if (closePort) this.log("Disconnected", 'info');
+    }
+
+    /**
+     * Pauses the read loop and releases locks, but keeps the port open.
+     * Used by modules (e.g. Screencast) that need exclusive access.
+     */
+    public async pauseConnection() {
+        if (!this.isConnected) return;
+        this.isConnected = false; // Stop loop
+
+        try {
+            if (this.reader) {
+                await this.reader.cancel();
+                this.reader.releaseLock();
+                this.reader = null;
+            }
+            if (this.writer) {
+                await this.writer.close();
+                this.writer.releaseLock();
+                this.writer = null;
+            }
+        } catch (e) {
+            console.warn("Pause connection error", e);
+        }
+        this.log("Protocol paused (Resource yielded)", "info");
+        return this.port;
+    }
+
+    /**
+     * Resumes the read loop using the existing port.
+     */
+    public async resumeConnection() {
+        if (!this.port) return;
+        if (this.port.readable.locked || this.port.writable.locked) {
+            this.log("Cannot resume: Port is still locked.", "error");
+            return;
+        }
+
+        try {
+            this.reader = this.port.readable.getReader();
+            this.writer = this.port.writable.getWriter();
+            this.isConnected = true;
+            this.log("Protocol resumed", "success");
+            this.readLoop();
+        } catch (e: any) {
+            this.log("Resume failed: " + e.message, "error");
+        }
     }
 
     public getPortInfo(): PortInfo {
@@ -443,6 +496,18 @@ export class Protocol {
                     }
                 }
                 this.log(`Device: ${deviceInfoStr}`, 'success');
+
+                // Detect Module
+                const profile = ModuleManager.detectProfile(deviceInfoStr);
+                if (profile) {
+                    ModuleManager.setActiveProfile(profile);
+                    this.log(`Active Profile: ${profile.name}`, 'info');
+                } else {
+                    // Fallback to stock
+                    console.log("No specific profile matched, using Stock.");
+                    ModuleManager.setActiveProfile(new StockProfile());
+                }
+
                 return { uid: "", blVersion: deviceInfoStr, timestamp: ts };
             }
         }
@@ -701,6 +766,16 @@ export class Protocol {
     // ========================================================================
 
     public async getRadioStats(): Promise<RadioStats> {
+        const profile = ModuleManager.getActiveProfile();
+        if (profile) {
+            try {
+                const customStats = await profile.getTelemetry(this);
+                if (customStats) return customStats;
+            } catch (e) {
+                console.warn("Module telemetry failed", e);
+            }
+        }
+
         const stats: RadioStats = {};
 
         try {
