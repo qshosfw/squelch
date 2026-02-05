@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -7,7 +7,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 
-import { Separator } from '@/components/ui/separator';
 import { Send, Trash2, Pause, Play, Download, TerminalSquare } from 'lucide-react';
 import { protocol } from '@/lib/protocol';
 import { cn } from '@/lib/utils';
@@ -94,26 +93,32 @@ export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
 
     return (
         <Card className="flex flex-col h-full border-none shadow-none rounded-none bg-background/50">
-            <CardHeader className="px-4 py-3 border-b flex flex-row items-center justify-between space-y-0">
+            <div className="px-4 py-3 border-b flex flex-row items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <TerminalSquare className="h-5 w-5 text-muted-foreground" />
+                    <TerminalSquare className="h-4 w-4 text-muted-foreground" />
                     <div>
-                        <CardTitle className="text-base">Serial Console</CardTitle>
-                        <CardDescription className="text-xs">Monitor device traffic</CardDescription>
+                        <h3 className="text-sm font-semibold leading-none flex items-center gap-2">
+                            Serial Monitor
+                            {connected ? (
+                                <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/10 border-none text-[10px] h-4 py-0">LIVE</Badge>
+                            ) : (
+                                <Badge variant="outline" className="text-[10px] h-4 py-0 opacity-50">OFFLINE</Badge>
+                            )}
+                        </h3>
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="icon" onClick={() => setIsPaused(!isPaused)} title={isPaused ? "Resume" : "Pause"}>
+                <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsPaused(!isPaused)}>
                         {isPaused ? <Play className="h-4 w-4 text-green-500" /> : <Pause className="h-4 w-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={onClear} title="Clear Logs">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClear}>
                         <Trash2 className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={exportLogs} title="Export Logs">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={exportLogs}>
                         <Download className="h-4 w-4" />
                     </Button>
                 </div>
-            </CardHeader>
+            </div>
 
             <div className="px-4 py-2 border-b flex items-center gap-4 bg-muted/20">
                 <div className="flex items-center space-x-2">
@@ -122,44 +127,47 @@ export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
                         checked={autoScroll}
                         onCheckedChange={(c) => setAutoScroll(!!c)}
                     />
-                    <Label htmlFor="autoscroll" className="text-xs font-normal cursor-pointer">Auto-scroll</Label>
+                    <Label htmlFor="autoscroll" className="text-xs font-medium cursor-pointer">Auto-scroll</Label>
                 </div>
-                <Separator orientation="vertical" className="h-4" />
                 <div className="flex items-center space-x-2">
                     <Checkbox
                         id="keepalives"
                         checked={showKeepalives}
                         onCheckedChange={(c) => setShowKeepalives(!!c)}
                     />
-                    <Label htmlFor="keepalives" className="text-xs font-normal cursor-pointer">Show Keepalives</Label>
+                    <Label htmlFor="keepalives" className="text-xs font-medium cursor-pointer">Keepalives</Label>
                 </div>
             </div>
 
-            <ScrollArea className="flex-1 font-mono text-xs" ref={scrollRef}>
-                <div className="p-4 space-y-1">
+            <ScrollArea className="flex-1 text-[13px] leading-relaxed relative bg-[#0a0a0a] font-mono selection:bg-emerald-500/30" ref={scrollRef}>
+                <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] bg-[length:100%_2px,3px_100%] z-10" />
+                <div className="p-4 pt-2">
                     {logs.length === 0 && (
-                        <div className="text-center text-muted-foreground py-10 opacity-50">
-                            No logs to display
+                        <div className="flex flex-col items-center justify-center py-20 text-white/10">
+                            <TerminalSquare className="h-12 w-12 mb-2 opacity-5" />
+                            <p className="text-xs uppercase tracking-[0.2em]">Ready for input...</p>
                         </div>
                     )}
                     {logs.map((log) => (
-                        <div key={log.id} className="flex gap-2 group hover:bg-muted/50 p-0.5 rounded px-2 -mx-2">
-                            <span className="text-muted-foreground/50 shrink-0 select-none w-[70px] text-right">{log.timestamp}</span>
-                            <Badge variant="outline" className={cn(
-                                "h-5 text-[10px] px-1 uppercase shrink-0 w-12 justify-center",
-                                log.type === 'tx' ? "border-orange-500/30 text-orange-500" :
-                                    log.type === 'rx' ? "border-cyan-500/30 text-cyan-500" :
-                                        log.type === 'error' ? "border-red-500/30 text-red-500" :
-                                            log.type === 'success' ? "border-emerald-500/30 text-emerald-500" :
-                                                "text-muted-foreground"
-                            )}>
-                                {log.type}
-                            </Badge>
+                        <div key={log.id} className="flex gap-3 group/line border-l-2 border-transparent hover:border-emerald-500/20 py-0.5 px-1">
+                            <span className="text-white/20 shrink-0 select-none w-20 text-[10px] mt-0.5 opacity-0 group-hover/line:opacity-100 transition-opacity whitespace-nowrap">
+                                {log.timestamp.split(':').slice(1).join(':')}
+                            </span>
                             <span className={cn(
-                                "break-all",
-                                log.type === 'tx' ? "text-orange-400" :
-                                    log.type === 'rx' ? "text-cyan-400" :
-                                        log.type === 'error' ? "text-red-400" : ""
+                                "shrink-0 w-8 font-bold text-[10px] mt-0.5 select-none",
+                                log.type === 'tx' ? "text-orange-500/50" :
+                                    log.type === 'rx' ? "text-cyan-500/50" :
+                                        log.type === 'error' ? "text-red-500/50" :
+                                            "text-emerald-500/50"
+                            )}>
+                                {log.type === 'tx' ? 'TX >>' : log.type === 'rx' ? 'RX <<' : ' :: '}
+                            </span>
+                            <span className={cn(
+                                "break-all whitespace-pre-wrap flex-1",
+                                log.type === 'tx' ? "text-orange-300" :
+                                    log.type === 'rx' ? "text-cyan-100" :
+                                        log.type === 'error' ? "text-red-400 font-bold" :
+                                            log.type === 'success' ? "text-emerald-400" : "text-[#d4d4d4]"
                             )}>
                                 {log.content}
                             </span>
@@ -183,7 +191,7 @@ export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder={!connected ? "Connect to device to send commands..." : (inputType === 'hex' ? "e.g. AB CD 01 23" : "Type a command...")}
+                        placeholder={!connected ? "Connect to device..." : (inputType === 'hex' ? "Hex (AA BB CC)" : "Command...")}
                         className="font-mono"
                         disabled={!connected}
                     />

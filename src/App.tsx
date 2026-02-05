@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Toaster } from "@/components/ui/toaster"
 import { useToast } from "@/hooks/use-toast"
 import { protocol, type PortInfo, type SerialStats } from "@/lib/protocol"
@@ -20,6 +19,10 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, Con
 import { Zap, Github, Terminal, Shield, ChevronRight, Settings } from "lucide-react"
 import { usePreferences } from "@/contexts/PreferencesContext"
 import { PreferencesDialog } from "@/components/preferences-dialog"
+import { ComingSoonView } from "./components/coming-soon-view"
+import { Database, Radio as RadioIcon } from "lucide-react"
+import { PWAReloadPrompt } from "./components/pwa-reload-prompt"
+import { DynamicFavicon } from "./components/dynamic-favicon"
 
 import { useTheme } from "@/components/theme-provider"
 
@@ -99,6 +102,7 @@ function App() {
             return false;
         }
 
+        setIsBusy(true);
         try {
             const success = await protocol.connect()
             if (!success) throw new Error("Connection failed")
@@ -133,6 +137,8 @@ function App() {
             setConnected(false)
             setDeviceInfo(undefined);
             return false;
+        } finally {
+            setIsBusy(false);
         }
     }
 
@@ -278,6 +284,7 @@ function App() {
 
     return (
         <TooltipProvider>
+            <DynamicFavicon connected={connected} isBusy={isBusy || isFlashing} />
             <input
                 type="file"
                 ref={fileInputRef}
@@ -324,21 +331,21 @@ function App() {
 
             <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground font-sans tracking-tight antialiased selection:bg-neutral-200 selection:text-black dark:selection:bg-neutral-800 dark:selection:text-white">
                 {/* Header / Menu Bar */}
-                <header className="flex h-12 w-full shrink-0 items-center border-b px-4 bg-background z-20">
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 font-semibold">
+                <header className="flex h-10 w-full shrink-0 items-center border-b px-4 bg-background z-20">
+                    <div className="flex items-center gap-4 flex-1">
+                        <div className="flex items-center gap-2 font-semibold shrink-0">
                             Squelch
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <a href="https://github.com/sq5nit/squelch" target="_blank" rel="noreferrer">
-                                        <Badge variant="secondary" className="text-[10px] h-4 px-1 rounded-sm cursor-pointer hover:bg-neutral-200 dark:hover:bg-neutral-800 transition-colors">
-                                            <span className="block hover:hidden">v0.1.0</span>
-                                            <span className="hidden hover:block font-mono">2202890</span>
-                                        </Badge>
-                                    </a>
-                                </TooltipTrigger>
-                                <TooltipContent>View Commits (2202890)</TooltipContent>
-                            </Tooltip>
+                            <a
+                                href="https://github.com/qshosfw/squelch"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="group"
+                            >
+                                <Badge variant="secondary" className="text-[10px] h-4 px-1 rounded-sm cursor-pointer hover:bg-neutral-200 dark:hover:bg-neutral-800 transition-colors">
+                                    <span className="block group-hover:hidden">v0.1.0</span>
+                                    <span className="hidden group-hover:block font-mono tracking-tighter">{__COMMIT_HASH__}</span>
+                                </Badge>
+                            </a>
                         </div>
                         <Separator orientation="vertical" className="h-6" />
                         <TopMenuBar
@@ -355,12 +362,16 @@ function App() {
                             onOpenChange={setIsPreferencesOpen}
                         />
                     </div>
-                    <div className="ml-auto flex items-center gap-2">
+
+                    <div className="flex justify-center flex-1 max-w-sm px-2">
                         <CommandMenu />
+                    </div>
+
+                    <div className="flex-1 flex items-center justify-end gap-2">
                         <div className="flex items-center gap-1">
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <Button variant="ghost" size="icon" className="h-7 w-7">
                                         <Github className="h-4 w-4" />
                                     </Button>
                                 </TooltipTrigger>
@@ -368,7 +379,7 @@ function App() {
                             </Tooltip>
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsPreferencesOpen(true)}>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsPreferencesOpen(true)}>
                                         <Settings className="h-4 w-4" />
                                     </Button>
                                 </TooltipTrigger>
@@ -475,75 +486,19 @@ function App() {
                                                 )}
 
                                                 {currentView === 'memories' && (
-                                                    <Card>
-                                                        <CardContent className="p-0">
-                                                            <Table>
-                                                                <TableHeader>
-                                                                    <TableRow>
-                                                                        <TableHead className="w-[80px]">CH</TableHead>
-                                                                        <TableHead>Name</TableHead>
-                                                                        <TableHead>Frequency</TableHead>
-                                                                        <TableHead>Modulation</TableHead>
-                                                                        <TableHead className="text-right">Action</TableHead>
-                                                                    </TableRow>
-                                                                </TableHeader>
-                                                                <TableBody>
-                                                                    <TableRow>
-                                                                        <TableCell className="font-mono font-medium">001</TableCell>
-                                                                        <TableCell>Local Repeater</TableCell>
-                                                                        <TableCell className="font-mono text-muted-foreground">145.600</TableCell>
-                                                                        <TableCell><Badge variant="secondary">FM</Badge></TableCell>
-                                                                        <TableCell className="text-right">
-                                                                            <Button variant="ghost" size="sm">Edit</Button>
-                                                                        </TableCell>
-                                                                    </TableRow>
-                                                                    <TableRow>
-                                                                        <TableCell className="font-mono font-medium">002</TableCell>
-                                                                        <TableCell>Simplex Call</TableCell>
-                                                                        <TableCell className="font-mono text-muted-foreground">145.500</TableCell>
-                                                                        <TableCell><Badge variant="secondary">FM</Badge></TableCell>
-                                                                        <TableCell className="text-right">
-                                                                            <Button variant="ghost" size="sm">Edit</Button>
-                                                                        </TableCell>
-                                                                    </TableRow>
-                                                                </TableBody>
-                                                            </Table>
-                                                        </CardContent>
-                                                    </Card>
+                                                    <ComingSoonView
+                                                        title="Memory Manager"
+                                                        description="A powerful channel editor for your radio. Read, edit, and organize your memory channels with ease. Support for CHIRP imports and batch editing is in the works."
+                                                        icon={Database}
+                                                    />
                                                 )}
 
                                                 {currentView === 'remote' && (
-                                                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7 ">
-                                                        <Card className="lg:col-span-5 bg-zinc-950 dark:border-zinc-800">
-                                                            <div className="aspect-video w-full flex items-center justify-center relative overflow-hidden bg-zinc-950 rounded-lg">
-                                                                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-zinc-950 to-black opacity-80" />
-                                                                <div className="text-center space-y-2 relative z-10">
-                                                                    <div className="text-6xl font-mono font-bold text-emerald-500 tracking-tighter drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]">
-                                                                        145.600
-                                                                    </div>
-                                                                    <div className="flex justify-center space-x-2">
-                                                                        <Badge variant="outline" className="border-emerald-500/50 text-emerald-500">RX</Badge>
-                                                                        <Badge variant="outline" className="border-zinc-700 text-zinc-500">FM</Badge>
-                                                                    </div>
-                                                                </div>
-                                                                {/* Scanlines effect overlay */}
-                                                                <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,3px_100%] pointer-events-none" />
-                                                            </div>
-                                                        </Card>
-                                                        <Card className="lg:col-span-2">
-                                                            <CardHeader>
-                                                                <CardTitle>Keypad</CardTitle>
-                                                            </CardHeader>
-                                                            <CardContent>
-                                                                <div className="grid grid-cols-3 gap-2">
-                                                                    {['M', '▲', 'E', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((k) => (
-                                                                        <Button key={k} variant="outline" size="sm" className="font-mono text-xs">{k}</Button>
-                                                                    ))}
-                                                                    <Button variant="destructive" className="col-span-3 mt-2">PTT</Button>
-                                                                </div>
-                                                            </CardContent>
-                                                        </Card>
-                                                    </div>
+                                                    <ComingSoonView
+                                                        title="Remote Control"
+                                                        description="Real-time radio control and display mirroring. Operate your radio remotely through your browser with low-latency key input and live framebuffer updates."
+                                                        icon={RadioIcon}
+                                                    />
                                                 )}
 
                                                 {currentView === 'console' && (
@@ -582,6 +537,7 @@ function App() {
                     </main>
                 </div>
                 <Toaster />
+                <PWAReloadPrompt />
             </div>
         </TooltipProvider>
     )

@@ -13,6 +13,7 @@ import {
     Play,
     Square
 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -54,25 +55,31 @@ export function AppSidebar({
     deviceInfo
 }: SidebarProps) {
 
-    const NavItem = ({ icon: Icon, label, value, shortcut }: { icon: any, label: string, value: string, shortcut?: string }) => {
+    const NavItem = ({ icon: Icon, label, value, shortcut, badge }: { icon: any, label: string, value: string, shortcut?: string, badge?: string }) => {
         const isSelected = currentView === value
 
         if (isCollapsed) {
             return (
                 <Tooltip delayDuration={0}>
                     <TooltipTrigger asChild>
-                        <Button
-                            variant={isSelected ? "secondary" : "ghost"}
-                            size="icon"
-                            className="h-9 w-9"
-                            onClick={() => setCurrentView(value)}
-                        >
-                            <Icon className="h-4 w-4" />
-                            <span className="sr-only">{label}</span>
-                        </Button>
+                        <div className="relative">
+                            <Button
+                                variant={isSelected ? "secondary" : "ghost"}
+                                size="icon"
+                                className="h-9 w-9"
+                                onClick={() => setCurrentView(value)}
+                            >
+                                <Icon className="h-4 w-4" />
+                                <span className="sr-only">{label}</span>
+                            </Button>
+                            {badge && (
+                                <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-primary animate-pulse" />
+                            )}
+                        </div>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="flex items-center gap-4">
                         {label}
+                        {badge && <Badge variant="secondary" className="h-4 px-1 text-[8px] uppercase tracking-tighter bg-primary/10 text-primary border-none">{badge}</Badge>}
                         {shortcut && <span className="ml-auto text-xs tracking-widest text-muted-foreground">{shortcut}</span>}
                     </TooltipContent>
                 </Tooltip>
@@ -87,6 +94,11 @@ export function AppSidebar({
             >
                 <Icon className="mr-2 h-4 w-4" />
                 <span className="flex-1 text-left text-sm">{label}</span>
+                {badge && (
+                    <Badge variant="secondary" className="ml-auto h-4 px-1 text-[8px] uppercase tracking-tighter font-bold bg-primary/10 text-primary border-none">
+                        {badge}
+                    </Badge>
+                )}
             </Button>
         )
     }
@@ -149,9 +161,9 @@ export function AppSidebar({
             <ScrollArea className="flex-1 py-4">
                 <nav className="grid gap-1 px-2 group-[[data-collapsed=true]]:justify-center group-[[data-collapsed=true]]:px-2">
                     <NavItem icon={LayoutDashboard} label="Dashboard" value="overview" shortcut="⌘1" />
-                    <NavItem icon={Database} label="Memories" value="memories" shortcut="⌘2" />
+                    <NavItem icon={Database} label="Memories" value="memories" shortcut="⌘2" badge="WIP" />
                     <NavItem icon={ArrowUpCircle} label="Flasher" value="flasher" shortcut="⌘3" />
-                    <NavItem icon={Radio} label="Remote" value="remote" shortcut="⌘4" />
+                    <NavItem icon={Radio} label="Remote" value="remote" shortcut="⌘4" badge="WIP" />
                     <NavItem icon={Settings} label="Configuration" value="config" shortcut="⌘5" />
                     <NavItem icon={Terminal} label="Console" value="console" shortcut="⌘6" />
                     <NavItem icon={FileCode} label="Calibration" value="calib" />

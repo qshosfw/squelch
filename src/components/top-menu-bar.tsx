@@ -8,6 +8,8 @@ import {
     MenubarShortcut,
     MenubarTrigger,
 } from "@/components/ui/menubar"
+import { usePWAInstall } from "@/hooks/use-pwa-install"
+import { Github, Info, Download } from "lucide-react"
 
 interface TopMenuBarProps {
     onOpenPreferences: () => void;
@@ -28,11 +30,13 @@ export function TopMenuBar({
     isDarkMode, // Destructured isDarkMode
     onToggleDarkMode // Destructured onToggleDarkMode
 }: TopMenuBarProps) {
+    const { isInstallable, isAppInstalled, installPWA } = usePWAInstall();
+
     return (
-        <div className="flex items-center justify-between px-2 lg:px-4 bg-background">
-            <Menubar className="rounded-none border-none h-9 px-0 shadow-none bg-transparent">
+        <div className="flex items-center justify-between px-2 lg:px-4 bg-background h-7"> {/* Changed h-8 to h-7 */}
+            <Menubar className="rounded-none border-none h-7 px-0 shadow-none bg-transparent"> {/* Changed h-8 to h-7 */}
                 <MenubarMenu>
-                    <MenubarTrigger className="font-normal text-sm">File</MenubarTrigger>
+                    <MenubarTrigger className="font-medium text-[13px] py-0 h-7">File</MenubarTrigger> {/* Added text-xs, py-0, h-7 */}
                     <MenubarContent>
                         <MenubarItem onClick={onImportFirmware}>
                             Import binary & flash <MenubarShortcut>⌘O</MenubarShortcut>
@@ -49,7 +53,7 @@ export function TopMenuBar({
 
                 {/* New Edit Menu */}
                 <MenubarMenu>
-                    <MenubarTrigger className="font-normal text-sm">Edit</MenubarTrigger>
+                    <MenubarTrigger className="font-medium text-[13px] py-0 h-7">Edit</MenubarTrigger>
                     <MenubarContent>
                         <MenubarItem disabled>
                             Undo <MenubarShortcut>⌘Z</MenubarShortcut>
@@ -65,7 +69,7 @@ export function TopMenuBar({
                 </MenubarMenu>
 
                 <MenubarMenu>
-                    <MenubarTrigger className="font-normal text-sm">View</MenubarTrigger>
+                    <MenubarTrigger className="font-medium text-[13px] py-0 h-7">View</MenubarTrigger>
                     <MenubarContent>
                         {/* Dark Mode checkbox */}
                         <MenubarCheckboxItem checked={isDarkMode} onCheckedChange={onToggleDarkMode}>
@@ -80,7 +84,7 @@ export function TopMenuBar({
                 </MenubarMenu>
 
                 <MenubarMenu>
-                    <MenubarTrigger className="font-normal text-sm">Tools</MenubarTrigger>
+                    <MenubarTrigger className="font-medium text-[13px] py-0 h-7">Tools</MenubarTrigger>
                     <MenubarContent>
                         <MenubarItem onClick={onFlashFirmware}>
                             Flash Firmware to Radio
@@ -89,13 +93,28 @@ export function TopMenuBar({
                 </MenubarMenu>
 
                 <MenubarMenu>
-                    <MenubarTrigger className="font-normal text-sm">Help</MenubarTrigger>
+                    <MenubarTrigger className="font-medium text-[13px] py-0 h-7">Help</MenubarTrigger>
                     <MenubarContent>
-                        <MenubarItem onClick={() => window.open("https://github.com/sq5nit/squelch", "_blank")}>
+                        <MenubarItem onClick={() => window.open("https://github.com/qshosfw/squelch", "_blank")}>
+                            <Github className="mr-2 h-4 w-4" />
                             GitHub Repository
                         </MenubarItem>
                         <MenubarSeparator />
-                        <MenubarItem disabled>About Squelch</MenubarItem>
+                        {!isAppInstalled ? (
+                            <MenubarItem onClick={installPWA} disabled={!isInstallable}>
+                                <Download className="mr-2 h-4 w-4" />
+                                {isInstallable ? "Install PWA App" : "Install PWA App"}
+                            </MenubarItem>
+                        ) : (
+                            <MenubarItem disabled>
+                                <Download className="mr-2 h-4 w-4" />
+                                App Installed
+                            </MenubarItem>
+                        )}
+                        <MenubarItem disabled>
+                            <Info className="mr-2 h-4 w-4" />
+                            About Squelch
+                        </MenubarItem>
                     </MenubarContent>
                 </MenubarMenu>
             </Menubar>

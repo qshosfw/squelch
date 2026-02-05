@@ -13,6 +13,7 @@ export interface GitHubRepo {
     html_url: string;
     latest_release_tag?: string;
     stargazers_count: number;
+    default_branch: string;
 }
 
 export interface GitHubAsset {
@@ -68,5 +69,27 @@ export class GitHubService {
 
     async getLatestRelease(fullName: string): Promise<GitHubRelease> {
         return this.fetch(`https://api.github.com/repos/${fullName}/releases/latest`);
+    }
+
+    async getReadme(fullName: string): Promise<string> {
+        const data = await this.fetch(`https://api.github.com/repos/${fullName}/readme`);
+        if (data.download_url) {
+            const res = await fetch(data.download_url);
+            return res.text();
+        }
+        return "";
+    }
+
+    async getLicense(fullName: string): Promise<string> {
+        try {
+            const data = await this.fetch(`https://api.github.com/repos/${fullName}/license`);
+            if (data.download_url) {
+                const res = await fetch(data.download_url);
+                return res.text();
+            }
+        } catch (e) {
+            return "";
+        }
+        return "";
     }
 }
