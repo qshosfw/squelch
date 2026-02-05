@@ -86,6 +86,20 @@ function App() {
         };
     }, [toast, setBootloaderDetected]);
 
+    // Prevent accidental page close while busy (flashing or reading/writing)
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (isBusy || isFlashing) {
+                e.preventDefault();
+                e.returnValue = "Operation in progress. Are you sure you want to leave?";
+                return e.returnValue;
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [isBusy, isFlashing]);
+
     const handleConnect = async (silent = false) => {
         if (connected) {
             try {
