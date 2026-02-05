@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 import { Download, Upload, AlertTriangle, Terminal } from "lucide-react"
-import { protocolHandler } from "@/lib/protocol-handler"
+import { protocol } from "@/lib/protocol"
 import { useToast } from "@/hooks/use-toast"
 import { useState, useRef, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -49,19 +49,19 @@ export function CalibrationView({ onBusyChange }: { onBusyChange?: (isBusy: bool
         setIsWorking(false);
         onBusyChange?.(false);
         // Clear callbacks
-        protocolHandler.onProgress = null;
-        protocolHandler.onLog = null;
+        protocol.onProgress = null;
+        protocol.onLog = null;
     }
 
     const handleBackup = async () => {
         startWork();
         addLog("Starting Calibration Backup...", "info");
 
-        protocolHandler.onProgress = (p) => setProgress(p);
-        protocolHandler.onLog = (msg, type) => addLog(msg, type as any);
+        protocol.onProgress = (p) => setProgress(p);
+        protocol.onLog = (msg, type) => addLog(msg, type as any);
 
         try {
-            const data = await protocolHandler.backupEEPROM();
+            const data = await protocol.backupEEPROM();
 
             // Create download
             const blob = new Blob([data as unknown as BlobPart], { type: 'application/octet-stream' });
@@ -91,14 +91,14 @@ export function CalibrationView({ onBusyChange }: { onBusyChange?: (isBusy: bool
         startWork();
         addLog("Starting Calibration Restore...", "info");
 
-        protocolHandler.onProgress = (p) => setProgress(p);
-        protocolHandler.onLog = (msg, type) => addLog(msg, type as any);
+        protocol.onProgress = (p) => setProgress(p);
+        protocol.onLog = (msg, type) => addLog(msg, type as any);
 
         try {
             const buffer = await file.arrayBuffer();
             const data = new Uint8Array(buffer);
 
-            await protocolHandler.restoreEEPROM(data);
+            await protocol.restoreEEPROM(data);
 
             addLog("Restore complete. Please reboot device.", "success");
             toast({ title: "Restore Complete", description: "Calibration data written. Reboot required." });

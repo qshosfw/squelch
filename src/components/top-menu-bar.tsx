@@ -6,93 +6,100 @@ import {
     MenubarMenu,
     MenubarSeparator,
     MenubarShortcut,
-    MenubarSub,
-    MenubarSubContent,
-    MenubarSubTrigger,
     MenubarTrigger,
 } from "@/components/ui/menubar"
 
-export function TopMenuBar() {
+interface TopMenuBarProps {
+    onOpenPreferences: () => void;
+    onImportFirmware?: () => void;
+    onFlashFirmware?: () => void;
+    onBackupCalibration?: () => void;
+    onRestoreCalibration?: () => void;
+    isDarkMode: boolean; // Added isDarkMode prop
+    onToggleDarkMode: () => void; // Added onToggleDarkMode prop
+}
+
+export function TopMenuBar({
+    onOpenPreferences,
+    onImportFirmware,
+    onFlashFirmware,
+    onBackupCalibration,
+    onRestoreCalibration,
+    isDarkMode, // Destructured isDarkMode
+    onToggleDarkMode // Destructured onToggleDarkMode
+}: TopMenuBarProps) {
     return (
-        <Menubar className="rounded-none border-b border-none px-2 lg:px-4 h-9">
-            <MenubarMenu>
-                <MenubarTrigger className="font-normal text-sm">File</MenubarTrigger>
-                <MenubarContent>
-                    <MenubarItem>
-                        Connect Radio... <MenubarShortcut>⌘O</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarItem>
-                        Load Firmware... <MenubarShortcut>⌘L</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarSub>
-                        <MenubarSubTrigger>Export</MenubarSubTrigger>
-                        <MenubarSubContent>
-                            <MenubarItem>Memory CSV</MenubarItem>
-                            <MenubarItem>Calibration Dump</MenubarItem>
-                            <MenubarItem>Full Backup</MenubarItem>
-                        </MenubarSubContent>
-                    </MenubarSub>
-                    <MenubarSeparator />
-                    <MenubarItem>
-                        Preferences... <MenubarShortcut>⌘,</MenubarShortcut>
-                    </MenubarItem>
-                </MenubarContent>
-            </MenubarMenu>
-            <MenubarMenu>
-                <MenubarTrigger className="font-normal text-sm">Edit</MenubarTrigger>
-                <MenubarContent>
-                    <MenubarItem>
-                        Undo <MenubarShortcut>⌘Z</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarItem>
-                        Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem>Cut</MenubarItem>
-                    <MenubarItem>Copy</MenubarItem>
-                    <MenubarItem>Paste</MenubarItem>
-                </MenubarContent>
-            </MenubarMenu>
-            <MenubarMenu>
-                <MenubarTrigger className="font-normal text-sm">View</MenubarTrigger>
-                <MenubarContent>
-                    <MenubarCheckboxItem>Always on Top</MenubarCheckboxItem>
-                    <MenubarCheckboxItem checked>Show Status Bar</MenubarCheckboxItem>
-                    <MenubarSeparator />
-                    <MenubarItem>
-                        Reload <MenubarShortcut>⌘R</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarItem>
-                        Force Reload <MenubarShortcut>⇧⌘R</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem inset>Toggle Fullscreen</MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem inset>Hide Sidebar</MenubarItem>
-                </MenubarContent>
-            </MenubarMenu>
-            <MenubarMenu>
-                <MenubarTrigger className="font-normal text-sm">Tools</MenubarTrigger>
-                <MenubarContent>
-                    <MenubarItem>Flash Firmware</MenubarItem>
-                    <MenubarItem>Calibration Tool</MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem>Serial Terminal</MenubarItem>
-                    <MenubarItem>Spectrum Analyzer</MenubarItem>
-                </MenubarContent>
-            </MenubarMenu>
-            <MenubarMenu>
-                <MenubarTrigger className="font-normal text-sm">Help</MenubarTrigger>
-                <MenubarContent>
-                    <MenubarItem>Documentation</MenubarItem>
-                    <MenubarItem>GitHub Repository</MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem>Check for Updates...</MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem>About Squelch</MenubarItem>
-                </MenubarContent>
-            </MenubarMenu>
-        </Menubar>
+        <div className="flex items-center justify-between px-2 lg:px-4 bg-background">
+            <Menubar className="rounded-none border-none h-9 px-0 shadow-none bg-transparent">
+                <MenubarMenu>
+                    <MenubarTrigger className="font-normal text-sm">File</MenubarTrigger>
+                    <MenubarContent>
+                        <MenubarItem onClick={onImportFirmware}>
+                            Import Firmware & Flash <MenubarShortcut>⌘O</MenubarShortcut>
+                        </MenubarItem>
+                        <MenubarSeparator />
+                        <MenubarItem onClick={onBackupCalibration}>
+                            Export Calibration
+                        </MenubarItem>
+                        <MenubarItem onClick={onRestoreCalibration}>
+                            Restore Calibration
+                        </MenubarItem>
+                    </MenubarContent>
+                </MenubarMenu>
+
+                {/* New Edit Menu */}
+                <MenubarMenu>
+                    <MenubarTrigger className="font-normal text-sm">Edit</MenubarTrigger>
+                    <MenubarContent>
+                        <MenubarItem disabled>
+                            Undo <MenubarShortcut>⌘Z</MenubarShortcut>
+                        </MenubarItem>
+                        <MenubarItem disabled>
+                            Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
+                        </MenubarItem>
+                        <MenubarSeparator />
+                        <MenubarItem onClick={onOpenPreferences}>
+                            Preferences <MenubarShortcut>⌘,</MenubarShortcut>
+                        </MenubarItem>
+                    </MenubarContent>
+                </MenubarMenu>
+
+                <MenubarMenu>
+                    <MenubarTrigger className="font-normal text-sm">View</MenubarTrigger>
+                    <MenubarContent>
+                        {/* Dark Mode checkbox */}
+                        <MenubarCheckboxItem checked={isDarkMode} onCheckedChange={onToggleDarkMode}>
+                            Dark Mode
+                        </MenubarCheckboxItem>
+                        <MenubarCheckboxItem checked disabled>Show Status Bar</MenubarCheckboxItem>
+                        <MenubarSeparator />
+                        <MenubarItem onClick={() => window.location.reload()}>
+                            Reload Window <MenubarShortcut>⌘R</MenubarShortcut>
+                        </MenubarItem>
+                    </MenubarContent>
+                </MenubarMenu>
+
+                <MenubarMenu>
+                    <MenubarTrigger className="font-normal text-sm">Tools</MenubarTrigger>
+                    <MenubarContent>
+                        <MenubarItem onClick={onFlashFirmware}>
+                            Flash Firmware to Radio
+                        </MenubarItem>
+                    </MenubarContent>
+                </MenubarMenu>
+
+                <MenubarMenu>
+                    <MenubarTrigger className="font-normal text-sm">Help</MenubarTrigger>
+                    <MenubarContent>
+                        <MenubarItem onClick={() => window.open("https://github.com/sq5nit/squelch", "_blank")}>
+                            GitHub Repository
+                        </MenubarItem>
+                        <MenubarSeparator />
+                        <MenubarItem disabled>About Squelch</MenubarItem>
+                    </MenubarContent>
+                </MenubarMenu>
+            </Menubar>
+
+        </div>
     )
 }

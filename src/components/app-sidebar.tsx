@@ -26,6 +26,8 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 
+import type { PortInfo } from "@/lib/protocol"
+
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
     connected: boolean
     onConnect: () => void
@@ -36,7 +38,7 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
     setIsCollapsed: (collapsed: boolean) => void
     deviceInfo?: {
         version?: string;
-        portName?: string;
+        portInfo?: PortInfo;
     }
 }
 
@@ -160,28 +162,53 @@ export function AppSidebar({
                 <div className={cn("px-2", isCollapsed ? "hidden" : "px-4")}>
                     <Collapsible defaultOpen >
                         <CollapsibleTrigger className="flex w-full items-center justify-between py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
-                            {deviceInfo?.portName || "Device Information"}
+                            <span className="flex items-center gap-2">
+                                Device
+                                {connected && (
+                                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                )}
+                            </span>
                         </CollapsibleTrigger>
                         <CollapsibleContent className="space-y-2 pt-2">
                             <div className="rounded-md border p-3 text-xs space-y-2 bg-muted/30">
-                                <div className="flex justify-between items-center">
-                                    <span className="text-muted-foreground">Status</span>
-                                    <span className={cn("font-medium", connected ? "text-foreground" : "text-muted-foreground")}>
-                                        {connected ? "Connected" : "Disconnected"}
-                                    </span>
-                                </div>
-                                {connected && deviceInfo?.version && (
-                                    <div className="flex justify-between items-center border-t pt-2 mt-2">
-                                        {deviceInfo.version.startsWith("Bootloader") ? (
-                                            <span className="font-mono font-semibold text-amber-500">{deviceInfo.version}</span>
-                                        ) : (
-                                            <>
-                                                <span className="text-muted-foreground">Firmware</span>
-                                                <span className="font-mono font-medium truncate max-w-[120px]" title={deviceInfo.version}>
-                                                    {deviceInfo.version}
-                                                </span>
-                                            </>
+                                {connected && deviceInfo?.portInfo ? (
+                                    <>
+                                        {/* Driver/Chip Info */}
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-muted-foreground">Driver</span>
+                                            <span className="font-medium truncate max-w-[120px]" title={deviceInfo.portInfo.label}>
+                                                {deviceInfo.portInfo.label}
+                                            </span>
+                                        </div>
+                                        {/* VID:PID */}
+                                        {deviceInfo.portInfo.vidPid && deviceInfo.portInfo.vidPid !== "????" && (
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-muted-foreground">VID:PID</span>
+                                                <span className="font-mono text-muted-foreground">{deviceInfo.portInfo.vidPid}</span>
+                                            </div>
                                         )}
+                                        {/* Firmware Version */}
+                                        {deviceInfo.version && deviceInfo.version !== "Identifying..." && (
+                                            <div className="flex justify-between items-center border-t pt-2 mt-2">
+                                                {deviceInfo.version.startsWith("Bootloader") ? (
+                                                    <>
+                                                        <span className="text-muted-foreground">Mode</span>
+                                                        <span className="font-mono font-semibold text-amber-500">DFU</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <span className="text-muted-foreground">Firmware</span>
+                                                        <span className="font-mono font-medium truncate max-w-[100px]" title={deviceInfo.version}>
+                                                            {deviceInfo.version}
+                                                        </span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="text-center text-muted-foreground py-2">
+                                        No device connected
                                     </div>
                                 )}
                             </div>

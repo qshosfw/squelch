@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Toaster } from "@/components/ui/toaster"
 import { useToast } from "@/hooks/use-toast"
-import { protocolHandler } from "@/lib/protocol-handler"
+import { protocol, type PortInfo } from "@/lib/protocol"
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -17,76 +17,297 @@ import { CalibrationView } from "./components/calibration-view"
 import { ConsoleView } from "./components/console-view"
 import { SettingsView } from "./components/settings-view"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "@/components/ui/context-menu"
-import { Zap, Github, Terminal, Shield, ChevronRight } from "lucide-react"
+import { Zap, Github, Terminal, Shield, ChevronRight, Settings } from "lucide-react"
 import { usePreferences } from "@/contexts/PreferencesContext"
+import { PreferencesDialog } from "@/components/preferences-dialog"
+
+import { useTheme } from "@/components/theme-provider"
+import { Progress } from "@/components/ui/progress"
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"
+import { useRef, useEffect } from "react"
 
 function App() {
     const [connected, setConnected] = useState(false)
     const [currentView, setCurrentView] = useState("overview")
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
     const [isBusy, setIsBusy] = useState(false)
+    const [deviceInfo, setDeviceInfo] = useState<{ version: string, portInfo: PortInfo } | undefined>(undefined);
+    const [isPreferencesOpen, setIsPreferencesOpen] = useState(false)
+
+    // Fast Flash State
+    const [pendingFile, setPendingFile] = useState<File | null>(null);
+    const [showFlashConfirm, setShowFlashConfirm] = useState(false);
+    const [isFlashing, setIsFlashing] = useState(false);
+    const [flashProgress, setFlashProgress] = useState(0);
+    const [flashStep, setFlashStep] = useState("");
+    const [flashLogs, setFlashLogs] = useState<string[]>([]);
+    const [showSkip, setShowSkip] = useState(false);
+    const [consoleLogs, setConsoleLogs] = useState<{ id: number; timestamp: string; type: 'info' | 'error' | 'success' | 'tx' | 'rx'; content: string; }[]>([]);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // generateSW strategy if not default? Defaults are usually fine.
     const { toast } = useToast()
     const { setBootloaderDetected } = usePreferences()
+    const { theme, setTheme } = useTheme()
 
-    const handleConnect = async () => {
+    const handleConnect = async (silent = false) => {
         if (connected) {
             try {
-                await protocolHandler.disconnect()
+                await protocol.disconnect()
                 setConnected(false)
                 setBootloaderDetected(false)
-                toast({
-                    title: "Disconnected",
-                    description: "Radio disconnected.",
-                })
+                setDeviceInfo(undefined);
+                if (!silent) toast({ title: "Disconnected", description: "Radio disconnected." })
             } catch (error) {
                 console.error(error)
-                toast({
-                    variant: "destructive",
-                    title: "Disconnect Failed",
-                    description: "Could not cleanly disconnect.",
-                })
                 setConnected(false)
+                setDeviceInfo(undefined);
             }
-            return
+            return false;
         }
 
         try {
-            const success = await protocolHandler.connect()
+            const success = await protocol.connect()
             if (!success) throw new Error("Connection failed")
 
             setConnected(true)
-            toast({
-                title: "Connected",
-                description: "Serial port opened.",
-            })
+            const portInfo = protocol.getPortInfo();
+            setDeviceInfo({ version: "Identifying...", portInfo });
+
+            if (!silent) toast({ title: "Connected", description: "Serial port opened." })
 
             // Attempt identification
             try {
-                const info = await protocolHandler.identifyDevice(2000)
+                const info = await protocol.identifyDevice(2000)
                 const isBootloader = info.blVersion.startsWith("Bootloader")
                 setBootloaderDetected(isBootloader)
-                toast({
-                    title: "Device Identified",
-                    description: `Version: ${info.blVersion}`,
-                })
+                setDeviceInfo({ version: info.blVersion, portInfo });
+                if (!silent) toast({ title: "Device Identified", description: `Version: ${info.blVersion}` })
             } catch (e) {
                 console.warn("Identification failed", e)
-                // Don't disconnect, just warn
+                setDeviceInfo({ version: "Unknown Device", portInfo });
             }
-
+            return true;
         } catch (error: any) {
             console.error(error)
-            toast({
-                variant: "destructive",
-                title: "Connection Failed",
-                description: error.message || "Could not establish connection.",
-            })
+            if (!silent) {
+                toast({
+                    variant: "destructive",
+                    title: "Connection Failed",
+                    description: error.message || "Could not establish connection.",
+                })
+            }
             setConnected(false)
+            setDeviceInfo(undefined);
+            return false;
         }
     }
 
+    // Quick Actions Handlers
+    const handleImportFirmware = () => {
+        // Trigger hidden file input
+        fileInputRef.current?.click();
+    }
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setPendingFile(file);
+
+        // Reset input so same file can be selected again if needed
+        e.target.value = '';
+
+        // Check connection
+        if (!connected) {
+            const success = await handleConnect();
+            if (success) {
+                setShowFlashConfirm(true);
+            }
+        } else {
+            setShowFlashConfirm(true);
+        }
+    }
+
+    const performFlash = async () => {
+        if (!pendingFile) return;
+        setShowFlashConfirm(false);
+        setIsFlashing(true);
+        setFlashProgress(0);
+        setFlashStep("Initializing...");
+        setFlashLogs([]);
+        setShowSkip(false);
+
+        // Show skip button after 2.5s
+        const skipTimer = setTimeout(() => setShowSkip(true), 2500);
+
+        // Save global logger to restore later
+        const globalLog = protocol.onLog;
+
+        try {
+            const buffer = await pendingFile.arrayBuffer();
+            const data = new Uint8Array(buffer);
+            // Hook up progress
+            protocol.onProgress = (p) => setFlashProgress(p);
+            protocol.onStepChange = (s) => setFlashStep(s);
+
+            // We want both global log AND flash log.
+            protocol.onLog = (msg, type) => {
+                if (globalLog) globalLog(msg, type);
+                const timestamp = new Date().toLocaleTimeString().split(' ')[0];
+                setFlashLogs(prev => [...prev.slice(-20), `[${timestamp}] ${msg}`]);
+            };
+
+            await protocol.flashFirmware(data);
+
+            toast({ title: "Flashing Complete", description: "Device rebooting..." });
+            setFlashStep("Complete");
+        } catch (e: any) {
+            console.error(e);
+            toast({
+                variant: "destructive",
+                title: "Flash Failed",
+                description: e.message
+            });
+            setFlashStep("Failed");
+        } finally {
+            clearTimeout(skipTimer);
+            // Delay closing to show success/fail state briefly
+            setTimeout(() => {
+                setIsFlashing(false);
+                setFlashProgress(0);
+                protocol.onProgress = null;
+                protocol.onStepChange = null;
+                // Restore global logger
+                protocol.onLog = globalLog;
+                setPendingFile(null);
+            }, 1000);
+        }
+    }
+
+    // Console logging effect
+    useEffect(() => {
+        // Don't override if flash is active? Actually we want global logs anyway.
+        // But flash has its own temporary logger.
+        // We can make protocol support multiple listeners or just chain them.
+        // For now, let's just use the global one and make performFlash update BOTH if needed,
+        // OR just rely on console logs.
+        // But performFlash uses specific separate state.
+        // Let's hook it up globally.
+
+        const handleLog = (msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx') => {
+            setConsoleLogs(prev => {
+                const newLog = {
+                    id: Date.now() + Math.random(), // Simple ID
+                    timestamp: new Date().toLocaleTimeString(),
+                    type,
+                    content: msg
+                };
+                const updated = [...prev, newLog];
+                if (updated.length > 1000) return updated.slice(updated.length - 1000);
+                return updated;
+            });
+        };
+
+        // We need to be careful not to overwrite flash logger if it's active.
+        // Actually, performFlash overwrites it. 
+        // We should modify performFlash to NOT overwrite but maybe we can just share?
+        // Or make protocol emit events we can subscribe to.
+        // Given existing code, I'll set it here, but performFlash will overwrite it temporarily.
+        // This means console stops updating during flash.
+        // User wants "auto update even when not opened".
+        // Better: Make protocol support multiple listeners?
+        // Or hack: App.tsx wraps the logger.
+
+        protocol.onLog = handleLog;
+
+        return () => {
+            // cleanup
+        };
+    }, []);
+
+    const handleFlashFirmware = () => setCurrentView("flasher");
+    const handleBackupCalibration = () => setCurrentView("calib");
+    const handleRestoreCalibration = () => setCurrentView("calib");
+
+    const isDarkMode = theme === "dark";
+    const toggleDarkMode = () => setTheme(isDarkMode ? "light" : "dark");
+
     return (
         <TooltipProvider>
+            <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept=".bin"
+                onChange={handleFileChange}
+            />
+
+            {/* Flash Confirmation Dialog */}
+            <Dialog open={showFlashConfirm} onOpenChange={setShowFlashConfirm}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Flash Firmware?</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to flash <strong>{pendingFile?.name}</strong> to the connected device?
+                            This process cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setPendingFile(null)}>Cancel</Button>
+                        <Button onClick={performFlash}>Flash Firmware</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Flashing Progress Dialog */}
+            <Dialog open={isFlashing}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Flashing Firmware</DialogTitle>
+                        <DialogDescription>
+                            Please do not disconnect the device.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-2 space-y-4">
+                        <div className="space-y-1">
+                            <div className="flex justify-between text-xs text-muted-foreground font-medium">
+                                <span>{flashStep}</span>
+                                <span>{Math.round(flashProgress)}%</span>
+                            </div>
+                            <Progress value={flashProgress} />
+                        </div>
+
+                        {/* Log Output */}
+                        <div className="h-32 overflow-y-auto rounded-md bg-muted/50 p-2 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap border">
+                            {flashLogs.length === 0 ? <span className="opacity-50">Starting log...</span> : flashLogs.map((l, i) => (
+                                <div key={i}>{l}</div>
+                            ))}
+                        </div>
+
+                        {/* Skip Button */}
+                        {showSkip && flashStep.includes("Waiting") && (
+                            <div className="flex justify-center pt-2">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 hover:bg-transparent"
+                                    onClick={() => protocol.skipWaiting()}
+                                >
+                                    Skip waiting for DFU...
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground font-sans tracking-tight antialiased selection:bg-neutral-200 selection:text-black dark:selection:bg-neutral-800 dark:selection:text-white">
                 {/* Header / Menu Bar */}
                 <header className="flex h-12 w-full shrink-0 items-center border-b px-4 bg-background z-20">
@@ -95,7 +316,7 @@ function App() {
                             Squelch
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <a href="https://github.com/qshosfw/squelch" target="_blank" rel="noreferrer">
+                                    <a href="https://github.com/sq5nit/squelch" target="_blank" rel="noreferrer">
                                         <Badge variant="secondary" className="text-[10px] h-4 px-1 rounded-sm cursor-pointer hover:bg-neutral-200 dark:hover:bg-neutral-800 transition-colors">
                                             <span className="block hover:hidden">v0.1.0</span>
                                             <span className="hidden hover:block font-mono">2202890</span>
@@ -106,7 +327,19 @@ function App() {
                             </Tooltip>
                         </div>
                         <Separator orientation="vertical" className="h-6" />
-                        <TopMenuBar />
+                        <TopMenuBar
+                            onOpenPreferences={() => setIsPreferencesOpen(true)}
+                            onImportFirmware={handleImportFirmware}
+                            onFlashFirmware={handleFlashFirmware}
+                            onBackupCalibration={handleBackupCalibration}
+                            onRestoreCalibration={handleRestoreCalibration}
+                            isDarkMode={isDarkMode}
+                            onToggleDarkMode={toggleDarkMode}
+                        />
+                        <PreferencesDialog
+                            open={isPreferencesOpen}
+                            onOpenChange={setIsPreferencesOpen}
+                        />
                     </div>
                     <div className="ml-auto flex items-center gap-2">
                         <CommandMenu />
@@ -118,6 +351,14 @@ function App() {
                                     </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>GitHub</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsPreferencesOpen(true)}>
+                                        <Settings className="h-4 w-4" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Preferences</TooltipContent>
                             </Tooltip>
                             <ModeToggle />
                         </div>
@@ -133,6 +374,7 @@ function App() {
                         setCurrentView={setCurrentView}
                         isCollapsed={isSidebarCollapsed}
                         setIsCollapsed={setIsSidebarCollapsed}
+                        deviceInfo={deviceInfo}
                     />
 
                     <main className="flex-1 overflow-y-auto bg-muted/10 p-4 md:p-8 relative">
@@ -289,7 +531,7 @@ function App() {
                                         )}
 
                                         {currentView === 'console' && (
-                                            <ConsoleView />
+                                            <ConsoleView logs={consoleLogs} onClear={() => setConsoleLogs([])} />
                                         )}
 
                                         {currentView === 'calib' && (

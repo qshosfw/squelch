@@ -8,7 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Zap, AlertCircle, Loader2, Terminal, Download, Github, Plus, ArrowLeft } from "lucide-react"
-import { protocolHandler } from "@/lib/protocol-handler"
+import { protocol } from "@/lib/protocol"
 import { useToast } from "@/hooks/use-toast"
 import { useState, useRef, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -157,14 +157,14 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
         addLog("Initializing flashing process...", "info")
         onBusyChange?.(true)
 
-        protocolHandler.onProgress = (pct) => setProgress(pct);
-        protocolHandler.onLog = (msg, type) => addLog(msg, type as any);
+        protocol.onProgress = (pct) => setProgress(pct);
+        protocol.onLog = (msg, type) => addLog(msg, type as any);
 
         try {
             const buffer = await file.arrayBuffer()
             const firmware = new Uint8Array(buffer)
 
-            await protocolHandler.flashFirmware(firmware)
+            await protocol.flashFirmware(firmware)
 
             addLog("Flash successfully completed.", "success")
             toast({ title: "Flash Complete", description: "Firmware updated successfully." })
@@ -173,8 +173,8 @@ export function FlasherView({ onBusyChange }: { onBusyChange?: (isBusy: boolean)
         } finally {
             setIsFlashing(false)
             onBusyChange?.(false)
-            protocolHandler.onProgress = null;
-            protocolHandler.onLog = null;
+            protocol.onProgress = null;
+            protocol.onLog = null;
         }
     }
 
