@@ -1,4 +1,5 @@
 import { BAUDRATE } from "@/lib/constants";
+import { DisplayMirrorHandler } from "@/lib/framework/module-interface";
 
 // Protocol Constants
 const HEADER = new Uint8Array([0xAA, 0x55]);
@@ -7,7 +8,7 @@ const TYPE_DIFF = 0x02;
 // 128x64 pixels, 1 bit per pixel = 1024 bytes
 const FRAME_SIZE = 1024;
 
-export class SerialHandler {
+export class SerialHandler implements DisplayMirrorHandler {
     private port: any = null;
     private reader: ReadableStreamDefaultReader | null = null;
     private writer: WritableStreamDefaultWriter | null = null;
@@ -17,9 +18,9 @@ export class SerialHandler {
     private framebuffer = new Uint8Array(FRAME_SIZE);
 
     // Callbacks
-    public onFrameUpdate: (() => void) | null = null;
-    public onStatusChange: ((connected: boolean, error?: string) => void) | null = null;
-    public onStatsUpdate: ((stats: { fps: number, bps: number, totalFrames: number }) => void) | null = null;
+    public onFrameUpdate?: (framebuffer: Uint8Array) => void;
+    public onStatusChange?: (connected: boolean, error?: string) => void;
+    public onStatsUpdate?: (stats: { fps: number, bps: number, totalFrames: number }) => void;
 
     // Stats
     private frameCount = 0;
@@ -227,11 +228,11 @@ export class SerialHandler {
 
                             if (type === TYPE_SCREENSHOT && size === FRAME_SIZE) {
                                 this.framebuffer.set(payload);
-                                if (this.onFrameUpdate) this.onFrameUpdate();
+                                if (this.onFrameUpdate) this.onFrameUpdate(this.getFramebuffer());
                                 this.updateFPS();
                             } else if (type === TYPE_DIFF && size % 9 === 0) {
                                 this.applyDiff(payload, isNewFormat);
-                                if (this.onFrameUpdate) this.onFrameUpdate();
+                                if (this.onFrameUpdate) this.onFrameUpdate(this.getFramebuffer());
                                 this.updateFPS();
                             }
 

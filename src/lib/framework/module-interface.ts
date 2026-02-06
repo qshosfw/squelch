@@ -170,8 +170,25 @@ export abstract class RadioProfile {
     }
 
     /**
+     * Request the radio to start a display mirroring session.
+     * Returns a handler if successful, or null if not supported or failed.
+     * @param _protocol The active ProtocolHandler instance
+     */
+    async startDisplayMirror(_protocol: any): Promise<DisplayMirrorHandler | null> {
+        return null;
+    }
+
+    /**
+     * Send a key event to the radio.
+     * @param _protocol The active ProtocolHandler instance
+     * @param _key The key code (firmware specific)
+     */
+    async sendKey(_protocol: any, _key: number): Promise<void> {
+        // override
+    }
+
+    /**
      * Optional hook for custom handshake logic.
-     * If defined, the ProtocolHandler will call this INSTEAD of its default handshake.
      */
     async onHandshake(_protocol: any): Promise<void> {
         // Default: do nothing (let protocol use default)
@@ -193,3 +210,12 @@ export abstract class RadioProfile {
         // store api if needed for alerts/toasts
     }
 }
+
+export interface DisplayMirrorHandler {
+    onFrameUpdate?: (framebuffer: Uint8Array) => void;
+    onStatusChange?: (connected: boolean, error?: string) => void;
+    onStatsUpdate?: (stats: { fps: number, bps: number, totalFrames: number }) => void;
+    getFramebuffer: () => Uint8Array;
+    disconnect: (closePort?: boolean) => Promise<void>;
+}
+

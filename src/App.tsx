@@ -21,7 +21,8 @@ import { Zap, Github, Terminal, Shield, ChevronRight, Settings } from "lucide-re
 import { usePreferences } from "@/contexts/PreferencesContext"
 import { PreferencesDialog } from "@/components/preferences-dialog"
 import { ComingSoonView } from "./components/coming-soon-view"
-import { Database, Radio as RadioIcon } from "lucide-react"
+import { Database } from "lucide-react"
+import { RemoteView } from "./components/remote/RemoteView"
 import { PWAReloadPrompt } from "./components/pwa-reload-prompt"
 import { DynamicFavicon } from "./components/dynamic-favicon"
 import { ModuleManager } from "@/lib/framework/module-manager"
@@ -533,11 +534,7 @@ function App() {
                                                 )}
 
                                                 {currentView === 'remote' && (
-                                                    <ComingSoonView
-                                                        title="Remote Control"
-                                                        description="Real-time radio control and display mirroring. Operate your radio remotely through your browser with low-latency key input and live framebuffer updates."
-                                                        icon={RadioIcon}
-                                                    />
+                                                    <RemoteView />
                                                 )}
 
                                                 {currentView === 'console' && (
