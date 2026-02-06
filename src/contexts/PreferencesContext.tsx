@@ -1,16 +1,28 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { SupportedLocale, detectBrowserLocale } from "@/lib/i18n";
+
+export type ThemeMode = 'light' | 'dark' | 'system';
 
 interface Preferences {
+    // Appearance
+    theme: ThemeMode;
+    locale: SupportedLocale;
+    // Connection
+    autoConnect: boolean;
+    profileSwitchMode: 'auto' | 'prompt' | 'manual';
+    // Developer
     githubToken: string;
     customRepos: string[];
+    // Internal
     bootloaderDetected: boolean;
-    autoConnect: boolean;
     enableBackupCache: boolean;
-    profileSwitchMode: 'auto' | 'prompt' | 'manual';
-    calibrationOffsetLegacy: boolean; // Optional: future proofing
+    calibrationOffsetLegacy: boolean;
+    autoSwitchToFlasher: boolean;
 }
 
 interface PreferencesContextType extends Preferences {
+    setTheme: (theme: ThemeMode) => void;
+    setLocale: (locale: SupportedLocale) => void;
     setGithubToken: (token: string) => void;
     addCustomRepo: (repo: string) => void;
     removeCustomRepo: (repo: string) => void;
@@ -18,16 +30,20 @@ interface PreferencesContextType extends Preferences {
     setAutoConnect: (enabled: boolean) => void;
     setEnableBackupCache: (enabled: boolean) => void;
     setProfileSwitchMode: (mode: 'auto' | 'prompt' | 'manual') => void;
+    setAutoSwitchToFlasher: (enabled: boolean) => void;
 }
 
 const defaultPreferences: Preferences = {
+    theme: 'system',
+    locale: detectBrowserLocale(),
     githubToken: "",
     customRepos: [],
     bootloaderDetected: false,
     autoConnect: false,
     enableBackupCache: true,
     profileSwitchMode: 'auto',
-    calibrationOffsetLegacy: false
+    calibrationOffsetLegacy: false,
+    autoSwitchToFlasher: true
 };
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
@@ -38,9 +54,36 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         return stored ? { ...defaultPreferences, ...JSON.parse(stored) } : defaultPreferences;
     });
 
+    // Persist preferences
     useEffect(() => {
         localStorage.setItem("squelch-preferences", JSON.stringify(preferences));
     }, [preferences]);
+
+    // Apply theme to document
+    useEffect(() => {
+        const root = window.document.documentElement;
+        root.classList.remove('light', 'dark');
+
+        if (preferences.theme === 'system') {
+            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            root.classList.add(systemTheme);
+        } else {
+            root.classList.add(preferences.theme);
+        }
+    }, [preferences.theme]);
+
+    // Apply locale to document
+    useEffect(() => {
+        document.documentElement.lang = preferences.locale;
+    }, [preferences.locale]);
+
+    const setTheme = (theme: ThemeMode) => {
+        setPreferences(prev => ({ ...prev, theme }));
+    };
+
+    const setLocale = (locale: SupportedLocale) => {
+        setPreferences(prev => ({ ...prev, locale }));
+    };
 
     const setGithubToken = (token: string) => {
         setPreferences(prev => ({ ...prev, githubToken: token }));
@@ -76,16 +119,23 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         setPreferences(prev => ({ ...prev, profileSwitchMode: mode }));
     };
 
+    const setAutoSwitchToFlasher = (enabled: boolean) => {
+        setPreferences(prev => ({ ...prev, autoSwitchToFlasher: enabled }));
+    };
+
     return (
         <PreferencesContext.Provider value={{
             ...preferences,
+            setTheme,
+            setLocale,
             setGithubToken,
             addCustomRepo,
             removeCustomRepo,
             setBootloaderDetected,
             setAutoConnect,
             setEnableBackupCache,
-            setProfileSwitchMode
+            setProfileSwitchMode,
+            setAutoSwitchToFlasher
         }}>
             {children}
         </PreferencesContext.Provider>

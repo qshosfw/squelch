@@ -24,6 +24,7 @@ interface FlashProgressDialogProps {
     logs: LogEntry[];
     stats: SerialStats | null;
     flashResult: 'success' | 'error' | null;
+    endTime?: number | null;
     onSkipWaiting?: () => void;
     showSkipButton?: boolean;
     title?: string;
@@ -39,6 +40,7 @@ export function FlashProgressDialog({
     logs,
     stats,
     flashResult,
+    endTime,
     onSkipWaiting,
     showSkipButton,
     title = "Firmware Update",
@@ -98,7 +100,7 @@ export function FlashProgressDialog({
                     </div>
 
                     {/* Stats Display */}
-                    {stats && <SerialStatsDisplay stats={stats} compact />}
+                    {stats && <SerialStatsDisplay stats={stats} compact endTime={endTime} />}
 
                     {isFlashing && progress === 0 && (
                         <Alert className="bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-400">

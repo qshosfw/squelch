@@ -225,19 +225,12 @@ export function AppSidebar({
                                         {/* Firmware Version */}
                                         {deviceInfo.version && deviceInfo.version !== "Identifying..." && (
                                             <div className="flex justify-between items-center border-t pt-2 mt-2">
-                                                {deviceInfo.version.startsWith("Bootloader") ? (
-                                                    <>
-                                                        <span className="text-muted-foreground">Mode</span>
-                                                        <span className="font-mono font-semibold text-amber-500">DFU</span>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <span className="text-muted-foreground">Firmware</span>
-                                                        <span className="font-mono font-medium truncate max-w-[100px]" title={deviceInfo.version}>
-                                                            {deviceInfo.version}
-                                                        </span>
-                                                    </>
-                                                )}
+                                                <span className="text-muted-foreground">
+                                                    {deviceInfo.version.startsWith("Bootloader") ? "Bootloader" : "Firmware"}
+                                                </span>
+                                                <span className="font-mono font-medium truncate max-w-[100px]" title={deviceInfo.version}>
+                                                    {deviceInfo.version.replace("Bootloader ", "")}
+                                                </span>
                                             </div>
                                         )}
 

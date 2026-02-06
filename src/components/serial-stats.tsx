@@ -8,6 +8,7 @@ import { useEffect, useState } from "react"
 interface SerialStatsDisplayProps {
     stats: SerialStats | null
     compact?: boolean
+    endTime?: number | null
 }
 
 function formatDuration(ms: number): string {
@@ -30,7 +31,7 @@ function formatBytes(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
-export function SerialStatsDisplay({ stats, compact = false }: SerialStatsDisplayProps) {
+export function SerialStatsDisplay({ stats, compact = false, endTime }: SerialStatsDisplayProps) {
     const [duration, setDuration] = useState(0)
 
     useEffect(() => {
@@ -39,12 +40,18 @@ export function SerialStatsDisplay({ stats, compact = false }: SerialStatsDispla
             return
         }
 
-        const interval = setInterval(() => {
-            setDuration(Date.now() - stats.connectedAt!)
-        }, 1000)
+        const updateDuration = () => {
+            const end = endTime || Date.now()
+            setDuration(Math.max(0, end - stats.connectedAt!))
+        }
 
-        return () => clearInterval(interval)
-    }, [stats?.connectedAt])
+        updateDuration()
+
+        if (!endTime) {
+            const interval = setInterval(updateDuration, 1000)
+            return () => clearInterval(interval)
+        }
+    }, [stats?.connectedAt, endTime])
 
     if (!stats || !stats.connectedAt) {
         return (

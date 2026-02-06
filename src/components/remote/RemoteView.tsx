@@ -1,35 +1,34 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { ViewerPanel } from './ViewerPanel';
-import { ViewerSettings } from './DisplayCanvas';
 import { useToast } from '@/hooks/use-toast';
 import { useProtocol } from '@/hooks/useProtocol';
 import { ModuleManager } from '@/lib/framework/module-manager';
 import { DisplayMirrorHandler } from '@/lib/framework/module-interface';
 import { Radio as RadioIcon } from 'lucide-react';
+import {
+    FRAME_SIZE,
+    type ViewerSettings,
+    loadSettings,
+    saveSettings
+} from '@/lib/lcd-constants';
 
 export const RemoteView: React.FC = () => {
     const { protocol, isConnected } = useProtocol();
     const { toast } = useToast();
-    const [framebuffer, setFramebuffer] = useState<Uint8Array>(new Uint8Array(1024));
+    const [framebuffer, setFramebuffer] = useState<Uint8Array>(new Uint8Array(FRAME_SIZE));
     const [frameVersion, setFrameVersion] = useState(0);
     const [status, setStatus] = useState({ isConnected: false, fps: 0, bps: 0, totalFrames: 0 });
-    const [settings, setSettings] = useState<ViewerSettings>({
-        pixelSize: 4,
-        pixelAspectRatio: 1.3,
-        pixelLcd: 1,
-        invertLcd: 0,
-        colorKey: 'orange',
-        customColors: { bg: '#000000', fg: '#ffffff' },
-        backlightLevel: 8,
-        contrast: 13,
-        backlightShadow: 1,
-        lcdGhosting: 1
-    });
+    const [settings, setSettings] = useState<ViewerSettings>(loadSettings);
 
     const activeProfile = ModuleManager.getActiveProfile();
     const handlerRef = useRef<DisplayMirrorHandler | null>(null);
     const isPausedByUs = useRef(false);
     const hasNotified = useRef(false);
+
+    // Persist settings when changed
+    useEffect(() => {
+        saveSettings(settings);
+    }, [settings]);
 
     useEffect(() => {
         if (!activeProfile?.features.screencast) return;
@@ -41,6 +40,12 @@ export const RemoteView: React.FC = () => {
                     if (handler) {
                         handlerRef.current = handler;
                         isPausedByUs.current = true;
+                        setStatus(s => ({ ...s, isConnected: true }));
+
+                        if (!hasNotified.current) {
+                            toast({ title: "Remote Connected", description: "Display mirroring session started." });
+                            hasNotified.current = true;
+                        }
 
                         handler.onFrameUpdate = (fb) => {
                             setFramebuffer(new Uint8Array(fb));

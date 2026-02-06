@@ -129,12 +129,16 @@ export class Protocol {
         latencySamples: []
     };
 
+    private dataListener: ((data: Uint8Array) => void) | null = null;
+
+
     // Callbacks
     public onLog: ((msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx') => void) | null = null;
     public onProgress: ((percent: number) => void) | null = null;
     public onStepChange: ((step: string) => void) | null = null;
     public onStatusChange: ((connected: boolean, error?: string) => void) | null = null;
     public onStatsUpdate: ((stats: SerialStats) => void) | null = null;
+    public onDfuDetected: ((version: string) => void) | null = null;
 
     private log(msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx' = 'info') {
         if (this.onLog) this.onLog(msg, type);
@@ -153,7 +157,7 @@ export class Protocol {
         return Date.now() - this._stats.connectedAt;
     }
 
-    private resetStats() {
+    public resetStats() {
         this._stats = {
             connectedAt: Date.now(),
             bytesSent: 0,
@@ -202,36 +206,31 @@ export class Protocol {
     // ========================================================================
 
     public async connect(existingPort?: any): Promise<{ success: boolean; portInfo?: PortInfo }> {
-        try {
-            if (existingPort) {
-                this.port = existingPort;
-            } else {
-                if (!('serial' in navigator)) throw new Error("Web Serial not supported");
-                // @ts-ignore
-                this.port = await navigator.serial.requestPort();
-                await this.port.open({ baudRate: BAUDRATE });
-            }
-
-            if (this.port.readable.locked) {
-                throw new Error("Port locked. Please retry.");
-            }
-
-            this.reader = this.port.readable.getReader();
-            this.writer = this.port.writable.getWriter();
-            this.isConnected = true;
-            this.readBuffer = [];
-            this.resetStats();
-
-            this.readLoop();
-
-            const portInfo = this.getPortInfo();
-            this.log(`Connected to ${portInfo.label}`, 'success');
-
-            return { success: true, portInfo };
-        } catch (e: any) {
-            this.log(`Connection failed: ${e.message}`, 'error');
-            return { success: false };
+        if (existingPort) {
+            this.port = existingPort;
+        } else {
+            if (!('serial' in navigator)) throw new Error("Web Serial not supported");
+            // @ts-ignore
+            this.port = await navigator.serial.requestPort();
+            await this.port.open({ baudRate: BAUDRATE });
         }
+
+        if (this.port.readable.locked) {
+            throw new Error("Port locked. Please retry.");
+        }
+
+        this.reader = this.port.readable.getReader();
+        this.writer = this.port.writable.getWriter();
+        this.isConnected = true;
+        this.readBuffer = [];
+        this.resetStats();
+
+        this.readLoop();
+
+        const portInfo = this.getPortInfo();
+        this.log(`Connected to ${portInfo.label}`, 'success');
+
+        return { success: true, portInfo };
     }
 
     public async disconnect(closePort = true) {
@@ -278,6 +277,10 @@ export class Protocol {
         }
         this.log("Protocol paused (Resource yielded)", "info");
         return this.port;
+    }
+
+    public setDataListener(listener: ((data: Uint8Array) => void) | null) {
+        this.dataListener = listener;
     }
 
     /**
@@ -328,10 +331,15 @@ export class Protocol {
                     break;
                 }
                 if (value && value.length > 0) {
-                    for (let i = 0; i < value.length; i++) {
-                        this.readBuffer.push(value[i]);
+                    if (this.dataListener) {
+                        this.dataListener(value);
+                        this._stats.bytesReceived += value.length;
+                    } else {
+                        for (let i = 0; i < value.length; i++) {
+                            this.readBuffer.push(value[i]);
+                        }
+                        this._stats.bytesReceived += value.length;
                     }
-                    this._stats.bytesReceived += value.length;
                 }
             } catch (e: any) {
                 if (this.isConnected) {
@@ -484,6 +492,21 @@ export class Protocol {
             if (!resp) continue;
 
             this.log(`RX: msgType=0x${resp.msgType.toString(16).padStart(4, '0')}`, 'rx');
+
+            if (resp.msgType === MSG_NOTIFY_DEV_INFO) {
+                // Parse bootloader version
+                let blVersionEnd = -1;
+                for (let i = 16; i < 32; i++) {
+                    if (resp.data[i] === 0) {
+                        blVersionEnd = i;
+                        break;
+                    }
+                }
+                if (blVersionEnd === -1) blVersionEnd = 32;
+                const blVersion = new TextDecoder().decode(resp.data.slice(16, blVersionEnd));
+
+                if (this.onDfuDetected) this.onDfuDetected(blVersion);
+            }
 
             if (resp.msgType === MSG_DEV_INFO_RESP) {
                 // Extract ASCII string from device info

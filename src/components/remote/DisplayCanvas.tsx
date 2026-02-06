@@ -1,29 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-
-// Constants locally defined to avoid import issues
-const WIDTH = 128;
-const HEIGHT = 64;
-
-export const COLOR_SETS: Record<string, { id: string, name: string, bg: string, fg: string }> = {
-    'classic': { id: 'classic', name: 'Classic Green', bg: '#9ca988', fg: '#2a2a2a' },
-    'orange': { id: 'orange', name: 'UV-K5', bg: '#ff9900', fg: '#0e0e0e' },
-    'white': { id: 'white', name: 'UV-K1', bg: '#c9f7ec', fg: '#262083' },
-    'blue': { id: 'blue', name: 'UV-5R', bg: '#39aef1', fg: '#101010' },
-    'oled': { id: 'oled', name: 'OLED White', bg: '#101010', fg: '#f0f0f0' },
-};
-
-export interface ViewerSettings {
-    pixelSize: number;
-    pixelAspectRatio: number;
-    pixelLcd: number; // 0 or 1
-    invertLcd: number; // 0 or 1
-    colorKey: string;
-    customColors: { bg: string, fg: string };
-    backlightLevel: number;
-    contrast: number;
-    backlightShadow: number;
-    lcdGhosting: number;
-}
+import { LCD_WIDTH as WIDTH, LCD_HEIGHT as HEIGHT, COLOR_SETS, type ViewerSettings } from '@/lib/lcd-constants';
 
 interface DisplayCanvasProps {
     framebuffer: Uint8Array;
@@ -41,13 +17,7 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
 
     // Helper to hex to rgb
     const hexToRgb = (hex: string) => {
-        const r = hex.replace('#', '');
-        // Support 3, 6, 8 digit hex
-        if (r.length === 3) {
-            const [r1, g1, b1] = r.split('');
-            return { r: parseInt(r1 + r1, 16), g: parseInt(g1 + g1, 16), b: parseInt(b1 + b1, 16) };
-        }
-        const result = /^([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})?$/i.exec(r);
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
         return result ? {
             r: parseInt(result[1], 16),
             g: parseInt(result[2], 16),
@@ -69,6 +39,7 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
 
     const applyBrightness = (hex: string, brightness: number) => {
         const c = hexToRgb(hex);
+        // Allow > 255 for "Vibrant" effect (clamped by browser/canvas, but we clamp manually for safety)
         const r = Math.min(255, c.r * brightness);
         const g = Math.min(255, c.g * brightness);
         const b = Math.min(255, c.b * brightness);
@@ -104,12 +75,17 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
         } = settings;
 
         // Backlight Logic
+        // 0-6:  Dimming (0.1 to 0.9)
+        // 7-8:  Normal (1.0)
+        // 9-10: Vibrant (1.15 to 1.3)
         let brightness = 1.0;
         if (backlightLevel <= 6) {
+            // Map 0-6 to 0.15 - 0.9
             brightness = 0.15 + (backlightLevel / 6) * 0.75;
         } else if (backlightLevel <= 8) {
             brightness = 1.0;
         } else {
+            // Boost for 9 and 10
             brightness = 1.0 + ((backlightLevel - 8) * 0.15);
         }
 
@@ -118,6 +94,7 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
         if (colorKey === 'custom') {
             colorSet = { id: 'custom', name: 'Custom', ...customColors };
         } else {
+            // @ts-ignore - Handle potential missing colorset gracefully
             colorSet = COLOR_SETS[colorKey] || COLOR_SETS.orange;
         }
 
@@ -125,20 +102,14 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
         const originalFg = colorSet.fg;
         const originalBg = colorSet.bg;
 
-        // Padding/Backlight color is always from the original background
-        const paddingColor = applyBrightness(originalBg, brightness);
+        // Apply brightness to the background and foreground colors
+        const dimmedOriginalBg = applyBrightness(originalBg, brightness);
+        const dimmedOriginalFg = applyBrightness(originalFg, brightness);
 
-        // Interior colors (swapped if inverted)
-        const interiorFg = invertLcd ? originalBg : originalFg;
-        const interiorBg = invertLcd ? originalFg : originalBg;
-
-        // Apply brightness to the interior colors
-        const dimmedOriginalBg = applyBrightness(interiorBg, brightness);
-        const dimmedOriginalFg = applyBrightness(interiorFg, brightness);
-
-        // Characterize LCD Area
-        const lcdBgColor = dimmedOriginalBg;
-        const baseFgColor = dimmedOriginalFg;
+        // Invert logic
+        const baseFgColor = invertLcd ? dimmedOriginalBg : dimmedOriginalFg;
+        const lcdBgColor = invertLcd ? dimmedOriginalFg : dimmedOriginalBg;
+        const paddingColor = dimmedOriginalBg;
 
         // Contrast Logic
         const contrastRatio = 0.15 + (contrast / 15) * 0.85;
@@ -169,10 +140,10 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
         ctx.fillRect(0, 0, finalCanvasWidth, finalCanvasHeight);
 
         // Grid effect color logic
-        let gridColor = lcdBgColor;
+        let gridColor = paddingColor;
         if (!invertLcd) {
             // In normal mode, slightly darken grid to be visible against the light background
-            gridColor = blendRgbStrings(lcdBgColor, dimmedOriginalFg, 0.08);
+            gridColor = blendRgbStrings(paddingColor, dimmedOriginalFg, 0.08);
         }
 
         // 2. Fill LCD area
@@ -252,7 +223,7 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
 
     // Backlight Shadow Logic
     const { backlightLevel = 10, backlightShadow, colorKey, customColors } = settings;
-    const rawBg = colorKey === 'custom' ? customColors.bg : COLOR_SETS[colorKey].bg;
+    const rawBg = colorKey === 'custom' ? customColors.bg : (COLOR_SETS[colorKey] || COLOR_SETS.orange).bg;
 
     // Shadow color matches the display calculation
     let brightness = 1.0;

@@ -59,6 +59,10 @@ const MarkdownComponents = {
             </p>
         );
     },
+    h1: ({ children }: any) => <h1 className="text-3xl font-bold mt-6 mb-4 pb-2 border-b">{children}</h1>,
+    h2: ({ children }: any) => <h2 className="text-2xl font-bold mt-6 mb-4">{children}</h2>,
+    h3: ({ children }: any) => <h3 className="text-xl font-semibold mt-5 mb-3">{children}</h3>,
+    h4: ({ children }: any) => <h4 className="text-lg font-semibold mt-4 mb-2">{children}</h4>,
     img: ({ src, alt, node, ...props }: any) => {
         const align = (node?.properties as any)?.align;
         return (

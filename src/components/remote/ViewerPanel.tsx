@@ -1,25 +1,39 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { DisplayCanvas, ViewerSettings, COLOR_SETS } from './DisplayCanvas';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { DisplayCanvas } from './DisplayCanvas';
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
+import { COLOR_SETS, type ViewerSettings, createDefaultSettings } from '@/lib/lcd-constants';
 import {
-    Settings2,
     Camera,
-    Activity,
-    Unplug,
+    Circle,
+    ZoomIn,
+    ZoomOut,
+    RotateCcw,
+    Settings,
     Palette,
-    Moon,
-    Sun,
     Grid,
     Ghost,
+    Moon,
+    Sun,
+    Activity,
+    Square,
+    Download,
+    Lightbulb,
+    Play,
+    Pause,
+    Loader2
 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from '@/components/ui/badge';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Separator } from '@/components/ui/separator';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
 interface SerialStatus {
     isConnected: boolean;
@@ -36,6 +50,145 @@ interface ViewerPanelProps {
     status: SerialStatus;
 }
 
+// Recording state
+interface RecordingState {
+    isRecording: boolean;
+    frames: string[];
+    startTime: number;
+}
+
+const saveBlob = async (blob: Blob, suggestedName: string, types: { description: string, accept: Record<string, string[]> }[]) => {
+    try {
+        if ('showSaveFilePicker' in window) {
+            const handle = await (window as any).showSaveFilePicker({
+                suggestedName,
+                types
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+        } else {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = suggestedName;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }
+    } catch (err: any) {
+        if (err.name !== 'AbortError') {
+            console.error('Save failed', err);
+        }
+    }
+};
+
+const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), 2);
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+};
+
+const RecordingPreview: React.FC<{
+    frames: string[];
+    onSave: (start: number, end: number) => void;
+    onDiscard: () => void;
+    isSaving: boolean;
+    progress: number | null;
+}> = ({ frames, onSave, onDiscard, isSaving, progress }) => {
+    const [range, setRange] = useState([0, Math.max(0, frames.length - 1)]);
+    const [current, setCurrent] = useState(0);
+    const [playing, setPlaying] = useState(true);
+    const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        setRange([0, Math.max(0, frames.length - 1)]);
+    }, [frames.length]);
+
+    useEffect(() => {
+        if (!playing) return;
+        const timer = setInterval(() => {
+            setCurrent(c => {
+                const next = c + 1;
+                if (next > range[1]) return range[0];
+                return next;
+            });
+        }, 100);
+        return () => clearInterval(timer);
+    }, [playing, range]);
+
+    useEffect(() => {
+        if (current < range[0]) setCurrent(range[0]);
+        if (current > range[1]) setCurrent(range[1]);
+    }, [range]);
+
+    const estimatedSize = dimensions.width > 0
+        ? formatBytes((range[1] - range[0] + 1) * dimensions.width * dimensions.height / 2)
+        : '~';
+
+    return (
+        <div className="flex flex-col gap-4">
+            <div className="relative aspect-[2/1] bg-black/5 rounded-lg overflow-hidden border flex items-center justify-center">
+                {frames.length > 0 && (
+                    <img
+                        src={frames[current] || frames[0]}
+                        className="h-full object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                        onLoad={(e) => {
+                            if (dimensions.width === 0) {
+                                setDimensions({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
+                            }
+                        }}
+                    />
+                )}
+                <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded font-mono backdrop-blur-sm">
+                    Frame {current + 1} / {frames.length}
+                </div>
+            </div>
+
+            <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <Button size="icon" variant="ghost" onClick={() => setPlaying(!playing)}>
+                        {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    </Button>
+                    <Slider
+                        value={range}
+                        min={0}
+                        max={Math.max(0, frames.length - 1)}
+                        step={1}
+                        minStepsBetweenThumbs={1}
+                        onValueChange={setRange}
+                        className="flex-1"
+                    />
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground font-mono">
+                    <span>Start: {range[0]}</span>
+                    <span>End: {range[1]}</span>
+                    <span>Est. Size: {estimatedSize}</span>
+                </div>
+            </div>
+
+            {isSaving && progress !== null && (
+                <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>{progress >= 100 ? "Finalizing..." : "Encoding GIF..."}</span>
+                        <span>{Math.round(progress)}%</span>
+                    </div>
+                    <Progress value={progress} className="h-2" />
+                </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:justify-between">
+                <Button variant="ghost" onClick={onDiscard} disabled={isSaving}>Discard</Button>
+                <Button onClick={() => onSave(range[0], range[1])} disabled={isSaving}>
+                    {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                    {progress && progress >= 100 ? "Finalizing..." : "Save GIF"}
+                </Button>
+            </DialogFooter>
+        </div>
+    );
+};
+
 export const ViewerPanel: React.FC<ViewerPanelProps> = ({
     framebuffer,
     frameVersion,
@@ -44,14 +197,21 @@ export const ViewerPanel: React.FC<ViewerPanelProps> = ({
     status
 }) => {
     const startTimeRef = useRef<number>(0);
-    const [duration, setDuration] = useState('00:00:00');
+    const [duration, setDuration] = useState('00:00');
+    const [recording, setRecording] = useState<RecordingState>({ isRecording: false, frames: [], startTime: 0 });
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+    const [recordingDuration, setRecordingDuration] = useState('00:00');
+    const recordingIntervalRef = useRef<number | null>(null);
+    const [showSettings, setShowSettings] = useState(false);
+    const [encodingProgress, setEncodingProgress] = useState<number | null>(null);
 
+    // Connection duration timer
     useEffect(() => {
         if (status.isConnected && startTimeRef.current === 0) {
             startTimeRef.current = Date.now();
         } else if (!status.isConnected) {
             startTimeRef.current = 0;
-            setDuration('00:00:00');
+            setDuration('00:00');
         }
     }, [status.isConnected]);
 
@@ -59,251 +219,487 @@ export const ViewerPanel: React.FC<ViewerPanelProps> = ({
         if (!status.isConnected) return;
         const timer = setInterval(() => {
             const diff = Math.floor((Date.now() - startTimeRef.current) / 1000);
-            const h = Math.floor(diff / 3600).toString().padStart(2, '0');
-            const m = Math.floor((diff % 3600) / 60).toString().padStart(2, '0');
+            const m = Math.floor(diff / 60).toString().padStart(2, '0');
             const s = (diff % 60).toString().padStart(2, '0');
-            setDuration(`${h}:${m}:${s}`);
+            setDuration(`${m}:${s}`);
         }, 1000);
         return () => clearInterval(timer);
     }, [status.isConnected]);
 
-    const handleScreenshot = () => {
+    // Recording frame capture
+    useEffect(() => {
+        if (recording.isRecording) {
+            recordingIntervalRef.current = window.setInterval(() => {
+                const canvas = document.querySelector('canvas');
+                if (canvas) {
+                    setRecording(r => ({
+                        ...r,
+                        frames: [...r.frames, canvas.toDataURL('image/png')]
+                    }));
+                }
+            }, 100); // 10 FPS capture
+        } else if (recordingIntervalRef.current) {
+            clearInterval(recordingIntervalRef.current);
+            recordingIntervalRef.current = null;
+        }
+        return () => {
+            if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+        };
+    }, [recording.isRecording]);
+
+    // Update recording duration
+    useEffect(() => {
+        if (!recording.isRecording) return;
+        const timer = setInterval(() => {
+            const diff = Math.floor((Date.now() - recording.startTime) / 1000);
+            const m = Math.floor(diff / 60).toString().padStart(2, '0');
+            const s = (diff % 60).toString().padStart(2, '0');
+            setRecordingDuration(`${m}:${s}`);
+        }, 100);
+        return () => clearInterval(timer);
+    }, [recording.isRecording, recording.startTime]);
+
+    const handleScreenshot = useCallback(() => {
         const canvas = document.querySelector('canvas');
         if (canvas) {
-            const link = document.createElement('a');
-            const now = new Date();
-            const timestamp = now.toISOString().replace(/[:.]/g, '-').split('T');
-            link.download = `k5-capture-${timestamp[0]}-${timestamp[1].slice(0, 8)}.png`;
-            link.href = canvas.toDataURL();
-            link.click();
-        }
-    };
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+            const filename = `capture-${timestamp}.png`;
 
-    const formatBytes = (bytes: number) => {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-    }
+            canvas.toBlob(async (blob) => {
+                if (blob) {
+                    await saveBlob(blob, filename, [{
+                        description: 'PNG Image',
+                        accept: { 'image/png': ['.png'] }
+                    }]);
+                }
+            }, 'image/png');
+        }
+    }, []);
+
+    const toggleRecording = useCallback(() => {
+        if (recording.isRecording) {
+            // Stop recording - show save dialog
+            setRecording(r => ({ ...r, isRecording: false }));
+            if (recording.frames.length > 0) {
+                setShowSaveDialog(true);
+            }
+        } else {
+            // Start recording
+            setRecording({ isRecording: true, frames: [], startTime: Date.now() });
+            setRecordingDuration('00:00');
+        }
+    }, [recording.isRecording, recording.frames.length]);
+
+    const saveRecording = useCallback(async (startFrame: number, endFrame: number) => {
+        if (recording.frames.length === 0) {
+            setShowSaveDialog(false);
+            return;
+        }
+
+        setEncodingProgress(0);
+        await new Promise(r => setTimeout(r, 50));
+
+        try {
+            const encoder = new GIFEncoder();
+
+            const firstImg = await new Promise<HTMLImageElement>((resolve) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.src = recording.frames[0];
+            });
+
+            const { width, height } = firstImg;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            if (!ctx) return;
+
+            const framesToSave = recording.frames.slice(startFrame, endFrame + 1);
+
+            for (let i = 0; i < framesToSave.length; i++) {
+                const frameUrl = framesToSave[i];
+                const img = await new Promise<HTMLImageElement>((resolve) => {
+                    const im = new Image();
+                    im.onload = () => resolve(im);
+                    im.src = frameUrl;
+                });
+
+                ctx.drawImage(img, 0, 0);
+                const { data } = ctx.getImageData(0, 0, width, height);
+
+                const palette = quantize(data, 256);
+                const index = applyPalette(data, palette);
+
+                encoder.writeFrame(index, width, height, { palette, delay: 100 });
+
+                if (i % 2 === 0 || i === framesToSave.length - 1) {
+                    setEncodingProgress(Math.round(((i + 1) / framesToSave.length) * 100));
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            encoder.finish();
+
+            const blob = new Blob([encoder.bytes()], { type: 'image/gif' });
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+            const filename = `recording-${timestamp}.gif`;
+
+            await saveBlob(blob, filename, [{
+                description: 'GIF Image',
+                accept: { 'image/gif': ['.gif'] }
+            }]);
+        } catch (error) {
+            console.error("GIF Encoding failed", error);
+        } finally {
+            setEncodingProgress(null);
+            setRecording({ isRecording: false, frames: [], startTime: 0 });
+            setShowSaveDialog(false);
+        }
+    }, [recording.frames]);
+
+
+
+    const discardRecording = useCallback(() => {
+        setRecording({ isRecording: false, frames: [], startTime: 0 });
+        setShowSaveDialog(false);
+    }, []);
+
+    const updateSetting = useCallback(<K extends keyof ViewerSettings>(key: K, value: ViewerSettings[K]) => {
+        setSettings(prev => ({ ...prev, [key]: value }));
+    }, [setSettings]);
+
+    const resetSettings = useCallback(() => {
+        setSettings(createDefaultSettings());
+    }, [setSettings]);
 
     return (
-        <div className="flex flex-col md:flex-row gap-6 animate-in fade-in duration-300">
-            {/* Sidebar Controls */}
-            <aside className="w-full md:w-80 space-y-4 shrink-0 order-2 md:order-1">
-                <Card>
-                    <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                                <Settings2 className="w-4 h-4" />
-                                Display Controls
-                            </CardTitle>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                        <Tabs defaultValue="appearance" className="w-full">
-                            <TabsList className="grid w-full grid-cols-3">
-                                <TabsTrigger value="appearance">Style</TabsTrigger>
-                                <TabsTrigger value="effects">Effects</TabsTrigger>
-                                <TabsTrigger value="colors">Colors</TabsTrigger>
-                            </TabsList>
+        <TooltipProvider>
+            <div className="flex flex-col gap-4">
+                {/* Toolbar */}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                    {/* Left: Status */}
+                    <div className="flex items-center gap-2">
+                        <Badge variant={status.isConnected ? "default" : "secondary"} className="gap-1.5">
+                            <span className={cn(
+                                "w-1.5 h-1.5 rounded-full",
+                                status.isConnected ? "bg-green-400 animate-pulse" : "bg-muted-foreground"
+                            )} />
+                            {status.isConnected ? `${status.fps} FPS` : 'Disconnected'}
+                        </Badge>
+                        {status.isConnected && (
+                            <>
+                                <Badge variant="outline" className="font-mono text-xs">
+                                    {formatBytes(status.bps)}/s
+                                </Badge>
+                                <Badge variant="outline" className="font-mono text-xs">
+                                    {duration}
+                                </Badge>
+                            </>
+                        )}
+                    </div>
 
-                            {/* Appearance Tab */}
-                            <TabsContent value="appearance" className="space-y-4 pt-4">
+                    {/* Center: Zoom */}
+                    <div className="flex items-center gap-1">
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('pixelSize', Math.max(2, settings.pixelSize - 0.5))}
+                                >
+                                    <ZoomOut className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Zoom Out</TooltipContent>
+                        </Tooltip>
+                        <span className="text-xs font-mono w-10 text-center">{settings.pixelSize}x</span>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('pixelSize', Math.min(12, settings.pixelSize + 0.5))}
+                                >
+                                    <ZoomIn className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Zoom In</TooltipContent>
+                        </Tooltip>
+                    </div>
+
+                    {/* Right: Actions */}
+                    <div className="flex items-center gap-1">
+                        {/* Quick toggles */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.invertLcd ? "default" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('invertLcd', settings.invertLcd ? 0 : 1)}
+                                >
+                                    {settings.invertLcd ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Invert Colors (I)</TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.pixelLcd ? "default" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('pixelLcd', settings.pixelLcd ? 0 : 1)}
+                                >
+                                    <Grid className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>LCD Grid (P)</TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.lcdGhosting ? "default" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('lcdGhosting', settings.lcdGhosting ? 0 : 1)}
+                                >
+                                    <Ghost className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>LCD Ghosting</TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.backlightShadow ? "default" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('backlightShadow', settings.backlightShadow ? 0 : 1)}
+                                >
+                                    <Lightbulb className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Backlight Glow</TooltipContent>
+                        </Tooltip>
+
+                        <Separator orientation="vertical" className="h-6 mx-1" />
+
+                        {/* Color picker */}
+                        <Popover>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                                            <Palette className="w-4 h-4" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>Color Theme</TooltipContent>
+                            </Tooltip>
+                            <PopoverContent className="w-48 p-2" align="end">
                                 <div className="space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <Label className="text-xs font-semibold uppercase text-muted-foreground">Pixel Scale</Label>
-                                        <span className="text-xs font-mono">{settings.pixelSize.toFixed(1)}x</span>
-                                    </div>
-                                    <Slider
-                                        min={2} max={12} step={0.5}
-                                        value={[settings.pixelSize]}
-                                        onValueChange={([val]: number[]) => setSettings(s => ({ ...s, pixelSize: val }))}
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <Label className="text-xs font-semibold uppercase text-muted-foreground">Pixel Aspect Ratio</Label>
-                                        <span className="text-xs font-mono">{settings.pixelAspectRatio.toFixed(2)}</span>
-                                    </div>
-                                    <Slider
-                                        min={0.5} max={2.0} step={0.05}
-                                        value={[settings.pixelAspectRatio]}
-                                        onValueChange={([val]: number[]) => setSettings(s => ({ ...s, pixelAspectRatio: val }))}
-                                    />
-                                </div>
-                            </TabsContent>
-
-                            {/* Effects Tab */}
-                            <TabsContent value="effects" className="space-y-4 pt-4">
-                                <div className="space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <Label className="text-xs font-semibold uppercase text-muted-foreground">Backlight</Label>
-                                        <span className="text-xs font-mono">{settings.backlightLevel}</span>
-                                    </div>
-                                    <Slider
-                                        min={0} max={10} step={1}
-                                        value={[settings.backlightLevel]}
-                                        onValueChange={([val]: number[]) => setSettings(s => ({ ...s, backlightLevel: val }))}
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <Label className="text-xs font-semibold uppercase text-muted-foreground">Contrast</Label>
-                                        <span className="text-xs font-mono">{settings.contrast}</span>
-                                    </div>
-                                    <Slider
-                                        min={0} max={15} step={1}
-                                        value={[settings.contrast]}
-                                        onValueChange={([val]: number[]) => setSettings(s => ({ ...s, contrast: val }))}
-                                    />
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 pt-2">
-                                    <div className="flex items-center space-x-2 border rounded-md p-2">
-                                        <Grid className="w-4 h-4 text-muted-foreground" />
-                                        <Label htmlFor="grid-toggle" className="flex-1 text-xs">LCD Grid</Label>
-                                        <Switch id="grid-toggle" checked={settings.pixelLcd === 1} onCheckedChange={(c) => setSettings(s => ({ ...s, pixelLcd: c ? 1 : 0 }))} />
-                                    </div>
-                                    <div className="flex items-center space-x-2 border rounded-md p-2">
-                                        <Ghost className="w-4 h-4 text-muted-foreground" />
-                                        <Label htmlFor="ghost-toggle" className="flex-1 text-xs">Ghosting</Label>
-                                        <Switch id="ghost-toggle" checked={settings.lcdGhosting === 1} onCheckedChange={(c) => setSettings(s => ({ ...s, lcdGhosting: c ? 1 : 0 }))} />
-                                    </div>
-                                    <div className="flex items-center space-x-2 border rounded-md p-2">
-                                        <Moon className="w-4 h-4 text-muted-foreground" />
-                                        <Label htmlFor="invert-toggle" className="flex-1 text-xs">Invert</Label>
-                                        <Switch id="invert-toggle" checked={settings.invertLcd === 1} onCheckedChange={(c) => setSettings(s => ({ ...s, invertLcd: c ? 1 : 0 }))} />
-                                    </div>
-                                    <div className="flex items-center space-x-2 border rounded-md p-2">
-                                        <Sun className="w-4 h-4 text-muted-foreground" />
-                                        <Label htmlFor="glow-toggle" className="flex-1 text-xs">Glow</Label>
-                                        <Switch id="glow-toggle" checked={settings.backlightShadow === 1} onCheckedChange={(c) => setSettings(s => ({ ...s, backlightShadow: c ? 1 : 0 }))} />
+                                    <Label className="text-xs text-muted-foreground">Display Color</Label>
+                                    <ToggleGroup
+                                        type="single"
+                                        value={settings.colorKey}
+                                        onValueChange={(val) => val && updateSetting('colorKey', val)}
+                                        className="grid grid-cols-4 gap-1"
+                                    >
+                                        {Object.entries(COLOR_SETS).map(([key, set]) => (
+                                            <Tooltip key={key}>
+                                                <TooltipTrigger asChild>
+                                                    <ToggleGroupItem
+                                                        value={key}
+                                                        className="h-8 w-8 p-0 rounded-md"
+                                                        style={{ backgroundColor: set.bg }}
+                                                    >
+                                                        <div
+                                                            className="w-3 h-3 rounded-sm"
+                                                            style={{ backgroundColor: set.fg }}
+                                                        />
+                                                    </ToggleGroupItem>
+                                                </TooltipTrigger>
+                                                <TooltipContent side="bottom">{set.name}</TooltipContent>
+                                            </Tooltip>
+                                        ))}
+                                    </ToggleGroup>
+                                    <div className="flex gap-1 pt-1">
+                                        <Input
+                                            type="color"
+                                            className="h-8 flex-1 p-1"
+                                            value={settings.customColors.bg}
+                                            onChange={(e) => {
+                                                updateSetting('customColors', { ...settings.customColors, bg: e.target.value });
+                                                updateSetting('colorKey', 'custom');
+                                            }}
+                                        />
+                                        <Input
+                                            type="color"
+                                            className="h-8 flex-1 p-1"
+                                            value={settings.customColors.fg}
+                                            onChange={(e) => {
+                                                updateSetting('customColors', { ...settings.customColors, fg: e.target.value });
+                                                updateSetting('colorKey', 'custom');
+                                            }}
+                                        />
                                     </div>
                                 </div>
-                            </TabsContent>
+                            </PopoverContent>
+                        </Popover>
 
-                            {/* Colors Tab */}
-                            <TabsContent value="colors" className="space-y-4 pt-4">
-                                <div className="grid grid-cols-5 gap-2">
-                                    {Object.values(COLOR_SETS).map((set) => (
-                                        <button
-                                            key={set.id}
-                                            onClick={() => setSettings(s => ({ ...s, colorKey: set.id as any }))}
-                                            className={`h-8 rounded-md border-2 transition-all relative ${settings.colorKey === set.id ? 'ring-2 ring-primary ring-offset-2' : 'hover:scale-105'}`}
-                                            style={{ backgroundColor: set.bg }}
-                                            title={set.name}
-                                        >
-                                            <div className="absolute inset-0 flex items-center justify-center">
-                                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: set.fg }} />
-                                            </div>
-                                        </button>
-                                    ))}
-
-                                    {/* Custom Color Popover */}
-                                    <Popover>
-                                        <PopoverTrigger asChild>
-                                            <button
-                                                className={`h-8 rounded-md border-2 border-dashed flex items-center justify-center transition-all ${settings.colorKey === 'custom' ? 'ring-2 ring-primary ring-offset-2 border-solid' : 'hover:bg-accent'}`}
-                                                title="Custom"
-                                                onClick={() => setSettings(s => ({ ...s, colorKey: 'custom' }))}
-                                            >
-                                                <Palette className="w-4 h-4" />
-                                            </button>
-                                        </PopoverTrigger>
-                                        <PopoverContent className="w-64">
-                                            <div className="space-y-2">
-                                                <h4 className="font-medium text-sm">Custom Colors</h4>
-                                                <div className="grid grid-cols-3 items-center gap-2">
-                                                    <Label className="text-xs">Foreground</Label>
-                                                    <Input
-                                                        type="color"
-                                                        className="h-8 w-full p-0 border-0 col-span-2"
-                                                        value={settings.customColors.fg}
-                                                        onChange={(e) => setSettings(s => ({ ...s, customColors: { ...s.customColors, fg: e.target.value } }))}
-                                                    />
-                                                </div>
-                                                <div className="grid grid-cols-3 items-center gap-2">
-                                                    <Label className="text-xs">Background</Label>
-                                                    <Input
-                                                        type="color"
-                                                        className="h-8 w-full p-0 border-0 col-span-2"
-                                                        value={settings.customColors.bg}
-                                                        onChange={(e) => setSettings(s => ({ ...s, customColors: { ...s.customColors, bg: e.target.value } }))}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </PopoverContent>
-                                    </Popover>
+                        {/* Settings */}
+                        <Popover open={showSettings} onOpenChange={setShowSettings}>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                                            <Settings className="w-4 h-4" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>Settings</TooltipContent>
+                            </Tooltip>
+                            <PopoverContent className="w-56 p-3" align="end">
+                                <div className="space-y-4">
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <Label>Backlight</Label>
+                                            <span className="font-mono text-muted-foreground">{settings.backlightLevel}</span>
+                                        </div>
+                                        <Slider
+                                            min={0} max={10} step={1}
+                                            value={[settings.backlightLevel]}
+                                            onValueChange={([val]) => updateSetting('backlightLevel', val)}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <Label>Contrast</Label>
+                                            <span className="font-mono text-muted-foreground">{settings.contrast}</span>
+                                        </div>
+                                        <Slider
+                                            min={0} max={15} step={1}
+                                            value={[settings.contrast]}
+                                            onValueChange={([val]) => updateSetting('contrast', val)}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <Label>Aspect Ratio</Label>
+                                            <span className="font-mono text-muted-foreground">{settings.pixelAspectRatio.toFixed(2)}</span>
+                                        </div>
+                                        <Slider
+                                            min={0.5} max={2.0} step={0.05}
+                                            value={[settings.pixelAspectRatio]}
+                                            onValueChange={([val]) => updateSetting('pixelAspectRatio', val)}
+                                        />
+                                    </div>
+                                    <Separator />
+                                    <Button variant="ghost" size="sm" className="w-full text-xs" onClick={resetSettings}>
+                                        <RotateCcw className="w-3 h-3 mr-1.5" />
+                                        Reset Settings
+                                    </Button>
                                 </div>
-                            </TabsContent>
-                        </Tabs>
+                            </PopoverContent>
+                        </Popover>
 
-                        <Separator />
+                        <Separator orientation="vertical" className="h-6 mx-1" />
 
-                        <Button variant="outline" className="w-full" onClick={handleScreenshot}>
-                            <Camera className="w-4 h-4 mr-2" />
-                            Screenshot
-                        </Button>
-                    </CardContent>
-                </Card>
+                        {/* Capture */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleScreenshot}>
+                                    <Camera className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Screenshot (Space)</TooltipContent>
+                        </Tooltip>
 
-                {/* Connection Stats */}
-                {status.isConnected && (
-                    <Card>
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                                <Activity className="w-4 h-4" /> Connection Stats
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <div className="text-[10px] text-muted-foreground uppercase font-bold">FPS</div>
-                                    <div className="text-xl font-mono">{status.fps}</div>
-                                </div>
-                                <div>
-                                    <div className="text-[10px] text-muted-foreground uppercase font-bold">Bitrate</div>
-                                    <div className="text-xl font-mono">{formatBytes(status.bps)}/s</div>
-                                </div>
-                                <div>
-                                    <div className="text-[10px] text-muted-foreground uppercase font-bold">Duration</div>
-                                    <div className="text-sm font-mono">{duration}</div>
-                                </div>
-                                <div>
-                                    <div className="text-[10px] text-muted-foreground uppercase font-bold">Frames</div>
-                                    <div className="text-sm font-mono">{status.totalFrames.toLocaleString()}</div>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
-            </aside>
-
-            {/* Main Display Area */}
-            <section className="flex-1 flex flex-col items-center justify-center min-h-[500px] bg-secondary/10 rounded-xl border border-dashed relative overflow-hidden order-1 md:order-2">
-                <div className="relative z-10 p-8">
-                    <DisplayCanvas framebuffer={framebuffer} settings={settings} frameVersion={frameVersion} />
+                        {/* Record */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={recording.isRecording ? "ghost" : "ghost"}
+                                    size="icon"
+                                    className={cn(
+                                        "h-8 w-8 transition-all duration-300",
+                                        recording.isRecording && "bg-red-600 hover:bg-red-700 text-white shadow-[0_0_15px_rgba(220,38,38,0.7)] animate-pulse scale-110"
+                                    )}
+                                    onClick={toggleRecording}
+                                >
+                                    {recording.isRecording ? (
+                                        <Square className="w-3 h-3 fill-current" />
+                                    ) : (
+                                        <Circle className="w-4 h-4" />
+                                    )}
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                {recording.isRecording ? `Stop (${recordingDuration})` : 'Record'}
+                            </TooltipContent>
+                        </Tooltip>
+                    </div>
                 </div>
-                {/* Waiting State */}
-                {!status.isConnected && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm z-20">
-                        <div className="text-center space-y-4 p-6 bg-card border rounded-xl shadow-lg max-w-sm">
-                            <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto">
-                                <Unplug className="w-6 h-6 text-muted-foreground" />
-                            </div>
-                            <div className="space-y-1">
-                                <h3 className="font-semibold">Waiting for Display Stream</h3>
-                                <p className="text-sm text-muted-foreground">
-                                    Connect your device and enable "Screencast" mode in the F4HWN menu.
-                                </p>
-                            </div>
-                        </div>
+
+                {/* Recording indicator */}
+                {recording.isRecording && (
+                    <div className="flex items-center justify-center gap-2 py-1 px-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+                        <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                        <span className="text-xs font-medium text-destructive">
+                            Recording {recordingDuration} • {recording.frames.length} frames
+                        </span>
                     </div>
                 )}
-            </section>
-        </div>
+
+                {/* Display */}
+                <div className="flex justify-center">
+                    <DisplayCanvas
+                        framebuffer={framebuffer}
+                        settings={settings}
+                        frameVersion={frameVersion}
+                    />
+                </div>
+
+                {/* Stats footer */}
+                {status.isConnected && (
+                    <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                            <Activity className="w-3 h-3" />
+                            {status.totalFrames.toLocaleString()} frames
+                        </span>
+                    </div>
+                )}
+            </div>
+
+            {/* Save Recording Dialog */}
+            <Dialog open={showSaveDialog} onOpenChange={(open) => {
+                if (!open && !encodingProgress) setShowSaveDialog(false);
+            }}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Save Recording</DialogTitle>
+                        <DialogDescription>
+                            Trim and save your capture.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <RecordingPreview
+                        frames={recording.frames}
+                        onSave={saveRecording}
+                        onDiscard={discardRecording}
+                        isSaving={encodingProgress !== null}
+                        progress={encodingProgress}
+                    />
+                </DialogContent>
+            </Dialog>
+        </TooltipProvider>
     );
 };

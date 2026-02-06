@@ -1,4 +1,5 @@
 import path from "path"
+import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 import { execSync } from "child_process"
@@ -15,6 +16,7 @@ try {
 export default defineConfig({
     plugins: [
         react(),
+        tailwindcss(),
         VitePWA({
             registerType: 'autoUpdate',
             includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],

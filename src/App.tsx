@@ -63,13 +63,14 @@ function App() {
     const [flashLogs, setFlashLogs] = useState<LogEntry[]>([]);
     const [flashResult, setFlashResult] = useState<'success' | 'error' | null>(null);
     const [flashStats, setFlashStats] = useState<SerialStats | null>(null);
+    const [flashEndTime, setFlashEndTime] = useState<number | null>(null);
     const [showSkip, setShowSkip] = useState(false);
     const [consoleLogs, setConsoleLogs] = useState<{ id: number; timestamp: string; type: 'info' | 'error' | 'success' | 'tx' | 'rx'; content: string; }[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // generateSW strategy if not default? Defaults are usually fine.
     const { toast } = useToast()
-    const { setBootloaderDetected } = usePreferences()
+    const { setBootloaderDetected, autoSwitchToFlasher } = usePreferences()
     const { theme, setTheme } = useTheme()
 
     // Listen for unexpected disconnects
@@ -95,6 +96,33 @@ function App() {
         };
     }, [toast, setBootloaderDetected]);
 
+    // DFU Detection Auto-Switch
+    // DFU Detection Auto-Switch
+    useEffect(() => {
+        protocol.onDfuDetected = (version) => {
+            // Update device info immediately
+            setDeviceInfo({
+                version: `Bootloader ${version}`,
+                portInfo: protocol.getPortInfo()
+            });
+            setBootloaderDetected(true);
+
+            if (autoSwitchToFlasher) {
+                const isFlasher = document.querySelector('h2')?.textContent?.toLowerCase() === 'flasher';
+                if (!isFlasher) {
+                    console.log("Auto-switching to flasher (DFU Detected)");
+                    setCurrentView("flasher");
+                    protocol.resetStats();
+                    toast({
+                        title: "DFU Mode Detected",
+                        description: `Bootloader ${version} detected. Switching to Flasher view...`,
+                    });
+                }
+            }
+        };
+        return () => { protocol.onDfuDetected = null; }
+    }, [autoSwitchToFlasher, toast, setBootloaderDetected]);
+
     // Prevent accidental page close while busy (flashing or reading/writing)
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -110,6 +138,16 @@ function App() {
     }, [isBusy, isFlashing]);
 
     const handleConnect = async (silent = false) => {
+        // Check WebSerial support first
+        if (!('serial' in navigator)) {
+            toast({
+                variant: "destructive",
+                title: "WebSerial Not Supported",
+                description: "Your browser doesn't support WebSerial. Please use Chrome, Edge, or Opera.",
+            });
+            return false;
+        }
+
         if (connected) {
             try {
                 await protocol.disconnect()
@@ -149,32 +187,51 @@ function App() {
                     ModuleManager.setActiveProfile(matchedProfile);
                     if (!silent) toast({ title: "Profile Activated", description: `Active: ${matchedProfile.name}` });
                 } else {
-                    // Fallback to stock or just stay null (selector allows manual pick)
-                    // Maybe default to Stock if we have no better idea, or let user pick.
-                    // For now, let's look for a generic "Stock" or first available if unknown?
-                    // Actually better to leave it null or keep previous?
-                    // Let's force Stock if nothing else matches, assuming Stock is basically "Basic Protocol".
-                    const stock = ModuleManager.detectProfile("stock"); // assuming stock matches "stock" or we can find by ID
+                    const stock = ModuleManager.detectProfile("stock");
                     if (stock) ModuleManager.setActiveProfile(stock);
                 }
 
                 if (!silent) toast({ title: "Device Identified", description: `Version: ${info.blVersion}` })
             } catch (e) {
                 console.warn("Identification failed", e)
-                setDeviceInfo({ version: "Unknown Device", portInfo });
+                setDeviceInfo(prev => {
+                    if (prev?.version?.startsWith("Bootloader")) return prev;
+                    return { version: "Unknown Device", portInfo };
+                });
             }
             return true;
         } catch (error: any) {
             console.error(error)
-            if (!silent) {
-                toast({
-                    variant: "destructive",
-                    title: "Connection Failed",
-                    description: error.message || "Could not establish connection.",
-                })
-            }
             setConnected(false)
             setDeviceInfo(undefined);
+
+            // Don't show error for user cancellation
+            if (error.name === 'NotFoundError' || error.message?.includes('No port selected')) {
+                // User cancelled the port selection dialog - silent fail
+                return false;
+            }
+
+            if (!silent) {
+                let errorMessage = error.message || "Could not establish connection.";
+                let errorTitle = "Connection Failed";
+
+                if (error.name === 'SecurityError') {
+                    errorTitle = "Permission Denied";
+                    errorMessage = "Serial port access was denied. Check browser permissions.";
+                } else if (error.name === 'NetworkError' || error.message?.includes('port is already open')) {
+                    errorTitle = "Port Busy";
+                    errorMessage = "The serial port is already in use by another application.";
+                } else if (error.message?.includes('Failed to open')) {
+                    errorTitle = "Open Failed";
+                    errorMessage = "Could not open the serial port. Check if the device is connected.";
+                }
+
+                toast({
+                    variant: "destructive",
+                    title: errorTitle,
+                    description: errorMessage,
+                })
+            }
             return false;
         } finally {
             setIsBusy(false);
@@ -215,6 +272,8 @@ function App() {
         setFlashLogs([]);
         setFlashResult(null);
         setFlashStats(null);
+        setFlashEndTime(null);
+        protocol.resetStats();
         setShowSkip(false);
 
         // Show skip button after 2.5s
@@ -249,8 +308,10 @@ function App() {
             toast({ title: "Flashing Complete", description: "Device rebooting..." });
             setFlashStep("Complete");
             setFlashResult('success');
+            setFlashEndTime(Date.now());
         } catch (e: any) {
             console.error(e);
+            setFlashEndTime(Date.now());
             toast({
                 variant: "destructive",
                 title: "Flash Failed",
@@ -364,6 +425,7 @@ function App() {
                 logs={flashLogs}
                 stats={flashStats}
                 flashResult={flashResult}
+                endTime={flashEndTime}
                 onSkipWaiting={() => protocol.skipWaiting()}
                 showSkipButton={showSkip && flashStep.includes("Waiting")}
             />
@@ -403,7 +465,14 @@ function App() {
                     </div>
 
                     <div className="flex justify-center flex-1 max-w-sm px-2">
-                        <CommandMenu />
+                        <CommandMenu
+                            onConnect={handleConnect}
+                            isConnected={connected}
+                            setCurrentView={setCurrentView}
+                            openPreferences={() => setIsPreferencesOpen(true)}
+                            triggerBackupCalibration={handleBackupCalibration}
+                            triggerImportFirmware={handleImportFirmware}
+                        />
                     </div>
 
                     <div className="flex-1 flex items-center justify-end gap-2">
