@@ -14,7 +14,6 @@
 
 import { ModuleManager } from './framework/module-manager';
 import { initializeModules } from '../modules';
-import { StockProfile } from '../modules/stock-module';
 
 // Initialize modules on load
 initializeModules();
@@ -33,10 +32,6 @@ import {
     MSG_WRITE_EEPROM,
     MSG_WRITE_EEPROM_RESP,
     MSG_REBOOT,
-    MSG_RSSI_REQ,
-    MSG_RSSI_RESP,
-    MSG_BATT_REQ,
-    MSG_BATT_RESP,
     CALIB_SIZE,
     CHUNK_SIZE,
     CALIB_OFFSET_LEGACY,
@@ -49,17 +44,11 @@ export * from "./constants";
 
 export interface DeviceInfo {
     uid: string;
-    blVersion: string;
+    firmwareVersion: string;
     timestamp?: number;
 }
 
-export interface RadioStats {
-    rssi?: number;
-    noise?: number;
-    glitch?: number;
-    voltage?: number;
-    current?: number;
-}
+
 
 export interface PortInfo {
     label: string;
@@ -115,6 +104,7 @@ export class Protocol {
     private set isConnected(val: boolean) { this._isConnected = val; }
     private readBuffer: number[] = [];
     private _skipDfuWait = false;
+    private sessionTimestamp: number = 0;
 
     // Serial Stats
     private _stats: SerialStats = {
@@ -139,6 +129,8 @@ export class Protocol {
     public onStatusChange: ((connected: boolean, error?: string) => void) | null = null;
     public onStatsUpdate: ((stats: SerialStats) => void) | null = null;
     public onDfuDetected: ((version: string) => void) | null = null;
+
+    public getSessionTimestamp() { return this.sessionTimestamp; }
 
     private log(msg: string, type: 'info' | 'error' | 'success' | 'tx' | 'rx' = 'info') {
         if (this.onLog) this.onLog(msg, type);
@@ -412,7 +404,7 @@ export class Protocol {
         return buf;
     }
 
-    private fetchMessage(): { msgType: number; data: Uint8Array } | null {
+    public fetchMessage(): { msgType: number; data: Uint8Array } | null {
         const buf = this.readBuffer;
         if (buf.length < 8) return null;
 
@@ -457,7 +449,7 @@ export class Protocol {
         return { msgType, data };
     }
 
-    private async sendMessage(msg: Uint8Array) {
+    public async sendMessage(msg: Uint8Array) {
         if (!this.writer) throw new Error("Not connected");
 
         const packet = this.makePacket(msg);
@@ -479,6 +471,7 @@ export class Protocol {
     public async identify(timeoutMs = 5000): Promise<DeviceInfo> {
         this.readBuffer = [];
         const ts = Date.now() & 0xffffffff;
+        this.sessionTimestamp = ts;
 
         // Create message: [msgType:2][dataLen:2][timestamp:4]
         const msg = this.createMessage(MSG_DEV_INFO_REQ, 4);
@@ -520,18 +513,7 @@ export class Protocol {
                 }
                 this.log(`Device: ${deviceInfoStr}`, 'success');
 
-                // Detect Module
-                const profile = ModuleManager.detectProfile(deviceInfoStr);
-                if (profile) {
-                    ModuleManager.setActiveProfile(profile);
-                    this.log(`Active Profile: ${profile.name}`, 'info');
-                } else {
-                    // Fallback to stock
-                    console.log("No specific profile matched, using Stock.");
-                    ModuleManager.setActiveProfile(new StockProfile());
-                }
-
-                return { uid: "", blVersion: deviceInfoStr, timestamp: ts };
+                return { uid: "", firmwareVersion: deviceInfoStr, timestamp: ts };
             }
         }
 
@@ -619,22 +601,63 @@ export class Protocol {
         this.log('Handshake complete', 'success');
     }
 
+    public async sendCommand(msgType: number, data: Uint8Array) {
+        const msg = this.createMessage(msgType, data.length);
+        for (let i = 0; i < data.length; i++) {
+            msg[4 + i] = data[i];
+        }
+        await this.sendMessage(msg);
+    }
+
+    public async waitForPacket(msgType: number, timeoutMs = 1000): Promise<Uint8Array | null> {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const resp = this.fetchMessage();
+            if (resp) {
+                if (resp.msgType === msgType) return resp.data;
+            }
+            await sleep(10);
+        }
+        return null;
+    }
+
     // ========================================================================
     // EEPROM Operations
     // ========================================================================
 
     public async readEEPROM(offset: number, size = CHUNK_SIZE, timestamp = 0): Promise<Uint8Array> {
-        await sleep(50);
+        // Module override
+        const activeProfile = ModuleManager.getActiveProfile();
+        if (activeProfile && activeProfile.readEEPROM) {
+            const override = await activeProfile.readEEPROM(this, offset, size);
+            if (override) return override;
+        }
+
+        // If size > CHUNK_SIZE, read in multiple chunks
+        if (size > CHUNK_SIZE) {
+            const result = new Uint8Array(size);
+            for (let i = 0; i < size; i += CHUNK_SIZE) {
+                const readSize = Math.min(CHUNK_SIZE, size - i);
+                const chunk = await this.readEEPROM(offset + i, readSize, timestamp);
+                result.set(chunk, i);
+            }
+            return result;
+        }
+        await sleep(5);
+        const ts = timestamp || this.sessionTimestamp || (Date.now() & 0xffffffff);
 
         // Create message: [msgType:2][dataLen:2][offset:2][size:2][timestamp:4]
         const msg = this.createMessage(MSG_READ_EEPROM, 8);
         const view = new DataView(msg.buffer);
         view.setUint16(4, offset, true);
-        view.setUint16(6, size, true);
-        view.setUint32(8, timestamp || (Date.now() & 0xffffffff), true);
+        view.setUint16(6, size, true); // Byte 6 = size, Byte 7 = 0
+        view.setUint32(8, ts, true);
 
         for (let retry = 0; retry < 3; retry++) {
-            if (retry > 0) await sleep(100);
+            if (retry > 0) {
+                this.log(`Retry EEPROM read at 0x${offset.toString(16)}...`, 'info');
+                await sleep(100);
+            }
             await this.sendMessage(msg);
 
             const start = Date.now();
@@ -648,8 +671,8 @@ export class Protocol {
                     const respOffset = dv.getUint16(0, true);
                     const respSize = resp.data[2];
 
-                    if (respOffset === offset && respSize === size) {
-                        return new Uint8Array(resp.data.slice(4, 4 + size));
+                    if (respOffset === offset) {
+                        return new Uint8Array(resp.data.slice(4, 4 + respSize));
                     }
                 }
             }
@@ -659,7 +682,26 @@ export class Protocol {
     }
 
     public async writeEEPROM(offset: number, data: Uint8Array, timestamp = 0): Promise<boolean> {
+        // Module override
+        const activeProfile = ModuleManager.getActiveProfile();
+        if (activeProfile && activeProfile.writeEEPROM) {
+            const result = await activeProfile.writeEEPROM(this, offset, data);
+            if (result) return true;
+        }
+
         const size = data.length;
+
+        // If size > CHUNK_SIZE, write in multiple chunks
+        if (size > CHUNK_SIZE) {
+            for (let i = 0; i < size; i += CHUNK_SIZE) {
+                const writeSize = Math.min(CHUNK_SIZE, size - i);
+                const chunk = data.slice(i, i + writeSize);
+                await this.writeEEPROM(offset + i, chunk, timestamp);
+            }
+            return true;
+        }
+
+        const ts = timestamp || this.sessionTimestamp || (Date.now() & 0xffffffff);
 
         // Create message: [msgType:2][dataLen:2][offset:2][size:2][writeEnable][pad][timestamp:4][data:16]
         const msg = this.createMessage(MSG_WRITE_EEPROM, 8 + size);
@@ -667,13 +709,16 @@ export class Protocol {
         view.setUint16(4, offset, true);
         view.setUint16(6, size, true);
         msg[7] = 1;  // Write enable flag
-        view.setUint32(8, timestamp || (Date.now() & 0xffffffff), true);
+        view.setUint32(8, ts, true);
         for (let i = 0; i < size; i++) {
             msg[12 + i] = data[i];
         }
 
         for (let retry = 0; retry < 3; retry++) {
-            if (retry > 0) await sleep(100);
+            if (retry > 0) {
+                this.log(`Retry EEPROM write at 0x${offset.toString(16)}...`, 'info');
+                await sleep(100);
+            }
             await this.sendMessage(msg);
 
             const start = Date.now();
@@ -701,13 +746,13 @@ export class Protocol {
         try {
             devInfo = await this.identify();
         } catch {
-            devInfo = { uid: '', blVersion: '', timestamp: Date.now() & 0xffffffff };
+            devInfo = { uid: '', firmwareVersion: '', timestamp: Date.now() & 0xffffffff };
         }
 
         // Auto-detect offset based on firmware version
         let currentOffset = offset;
         if (currentOffset === undefined) {
-            const versionMatch = devInfo.blVersion.match(/v?(\d+)\.(\d+)\.(\d+)/);
+            const versionMatch = devInfo.firmwareVersion.match(/v?(\d+)\.(\d+)\.(\d+)/);
             if (versionMatch) {
                 const major = parseInt(versionMatch[1], 10);
                 if (major >= 5) {
@@ -718,7 +763,7 @@ export class Protocol {
                     this.log(`Firmware v${major}.x: Using legacy offset (0x1E00)`, 'info');
                 }
             } else {
-                if (devInfo.blVersion.startsWith("Bootloader")) {
+                if (devInfo.firmwareVersion.startsWith("Bootloader")) {
                     throw new Error("Cannot read EEPROM in Bootloader mode. Restart radio normally.");
                 }
                 currentOffset = DEFAULT_CALIB_OFFSET;
@@ -754,12 +799,12 @@ export class Protocol {
         try {
             devInfo = await this.identify();
         } catch {
-            devInfo = { uid: '', blVersion: '', timestamp: Date.now() & 0xffffffff };
+            devInfo = { uid: '', firmwareVersion: '', timestamp: Date.now() & 0xffffffff };
         }
 
         let currentOffset = offset;
         if (currentOffset === undefined) {
-            const versionMatch = devInfo.blVersion.match(/v?(\d+)\.(\d+)\.(\d+)/);
+            const versionMatch = devInfo.firmwareVersion.match(/v?(\d+)\.(\d+)\.(\d+)/);
             if (versionMatch && parseInt(versionMatch[1], 10) >= 5) {
                 currentOffset = CALIB_OFFSET_NEW;
             } else {
@@ -780,69 +825,26 @@ export class Protocol {
         if (this.onProgress) this.onProgress(100);
         this.log("Restore complete. Rebooting...", 'success');
 
-        const rebootMsg = this.createMessage(MSG_REBOOT, 0);
-        await this.sendMessage(rebootMsg);
+        await this.reboot();
     }
 
     // ========================================================================
     // Telemetry
     // ========================================================================
 
-    public async getRadioStats(): Promise<RadioStats> {
-        const profile = ModuleManager.getActiveProfile();
-        if (profile) {
-            try {
-                const customStats = await profile.getTelemetry(this);
-                if (customStats) return customStats;
-            } catch (e) {
-                console.warn("Module telemetry failed", e);
-            }
+    public async reboot() {
+        // Module override
+        const activeProfile = ModuleManager.getActiveProfile();
+        if (activeProfile && activeProfile.reboot) {
+            if (await activeProfile.reboot(this)) return;
         }
 
-        const stats: RadioStats = {};
-
-        try {
-            this.readBuffer = [];
-            const msg = this.createMessage(MSG_RSSI_REQ, 0);
-            await this.sendMessage(msg);
-
-            const start = Date.now();
-            while (Date.now() - start < 500) {
-                await sleep(10);
-                const resp = this.fetchMessage();
-                if (resp && resp.msgType === MSG_RSSI_RESP) {
-                    const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
-                    stats.rssi = dv.getUint16(0, true) & 0x01FF;
-                    stats.noise = resp.data[2];
-                    stats.glitch = resp.data[3];
-                    break;
-                }
-            }
-        } catch { /* Ignore */ }
-
-        try {
-            this.readBuffer = [];
-            const msg = this.createMessage(MSG_BATT_REQ, 0);
-            await this.sendMessage(msg);
-
-            const start = Date.now();
-            while (Date.now() - start < 500) {
-                await sleep(10);
-                const resp = this.fetchMessage();
-                if (resp && resp.msgType === MSG_BATT_RESP) {
-                    const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
-                    stats.voltage = dv.getUint16(0, true);
-                    stats.current = dv.getUint16(2, true);
-                    break;
-                }
-            }
-        } catch { /* Ignore */ }
-
-        return stats;
+        const msg = this.createMessage(MSG_REBOOT, 0);
+        await this.sendMessage(msg);
     }
 
     // ========================================================================
-    // Firmware Flashing
+    // Legacy Method Aliases (Backwards Compatibility)
     // ========================================================================
 
     public async flashFirmware(firmware: Uint8Array) {

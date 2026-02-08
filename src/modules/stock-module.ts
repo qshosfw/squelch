@@ -1,18 +1,13 @@
 import { RadioProfile, Channel, FeatureFlags } from '../lib/framework/module-interface';
 
 export class StockProfile extends RadioProfile {
-    get id() { return "stock-uvk5"; }
+    get id() { return "stock-uvk5v3"; }
     get name() { return "Quansheng UV-K5 (Stock)"; }
 
     matchFirmware(_version: string): boolean {
-        // Stock firmwares usually look like "2.01.26", "Bootloader", etc.
-        // Or if it DOESN'T match known custom FWs (IJV, F4HWN).
-        // For now, let's be permissive or specific?
-        // Let's say if it contains K5 or is short version number.
-        return true; // Use as fallback for now? No, ModuleManager should handle fallback.
-        // Actually, let's match anything that isn't explicitly another profile.
-        // But for strict matching:
-        // return /^\d+\.\d+\.\d+$/.test(version) || version.includes("QS"); 
+        // Stock firmwares usually look like "2.01.26", doesn't match custom names
+        // Return false to allow fallback logic or other profiles to match first
+        return false;
     }
 
     get features(): FeatureFlags {

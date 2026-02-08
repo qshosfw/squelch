@@ -26,6 +26,9 @@ export interface Channel {
     busyLock?: boolean;
     txLock?: boolean;
     freqRev?: boolean;
+    scanList1?: boolean;
+    scanList2?: boolean;
+    scanList3?: boolean;
     [key: string]: any;
 }
 
@@ -62,7 +65,29 @@ export interface ModuleAPI {
     // Add more hooks here as needed
 }
 
+export interface TelemetryData {
+    batteryVoltage?: number;
+    batteryPercentage?: number;
+    batteryCurrent?: number;
+    isCharging?: boolean;
+    isLowBattery?: boolean;
+    rssi?: number;
+    rssi_dBm?: number;
+    snr?: number;
+    noiseIndicator?: number;
+    glitchIndicator?: number;
+    gain_dB?: number;
+    afAmplitude?: number;
+}
+
 export abstract class RadioProfile {
+    /**
+     * Common lists for UI selection (Mode, Power, ScanList, etc.)
+     */
+    get lists(): Record<string, (string | number)[]> {
+        return {};
+    }
+
     /**
      * Unique ID for this profile (e.g. 'stock-uvk5v3')
      */
@@ -76,7 +101,7 @@ export abstract class RadioProfile {
     /**
      * Module Version (semver)
      */
-    get version(): string { return "1.0.0"; }
+    get version(): string { return "0.0.0"; }
 
     /**
      * Author / Maintainer
@@ -108,6 +133,13 @@ export abstract class RadioProfile {
             screencast: false,
             calibration: false
         };
+    }
+
+    /**
+     * Fetch extended device information (e.g., Serial, MAC).
+     */
+    async getExtendedInfo(_protocol: any): Promise<Record<string, string> | null> {
+        return null;
     }
 
     // --- Memory Layouts ---
@@ -157,6 +189,22 @@ export abstract class RadioProfile {
     abstract decodeChannel(buffer: Uint8Array, index: number, auxBuffer?: { attr?: Uint8Array, name?: Uint8Array }): Channel;
 
     abstract encodeChannel(c: Channel, buffer: Uint8Array, _index: number, aux?: { attr?: Uint8Array, name?: Uint8Array }): void;
+
+    /**
+     * Bulk read channels from the radio.
+     * Profiles should implement this to optimize reading based on their memory layout.
+     */
+    async readChannels(_protocol: any, _onProgress: (p: number) => void, _onLiveUpdate?: (batch: Channel[]) => void): Promise<Channel[]> {
+        return [];
+    }
+
+    /**
+     * Bulk write channels to the radio.
+     * Profiles should implement this to optimize writing based on their memory layout.
+     */
+    async writeChannels(_protocol: any, _channels: Channel[], _onProgress: (p: number) => void): Promise<boolean> {
+        return false;
+    }
 
     // --- Telemetry & Protocol Hooks ---
 
@@ -208,6 +256,37 @@ export abstract class RadioProfile {
      */
     onActivate(_api: ModuleAPI): void {
         // store api if needed for alerts/toasts
+    }
+
+    /**
+     * Called when the module is deactivated.
+     * Can be used to clean up resources or state.
+     */
+    onDeactivate(): void {
+        // override if needed
+    }
+
+    // --- Command Overrides ---
+
+    /**
+     * Override reboot command. Return true if handled.
+     */
+    async reboot(_protocol: any): Promise<boolean> {
+        return false;
+    }
+
+    /**
+     * Override EEPROM read. Return Uint8Array if handled, null otherwise.
+     */
+    async readEEPROM(_protocol: any, _offset: number, _size: number): Promise<Uint8Array | null> {
+        return null;
+    }
+
+    /**
+     * Override EEPROM write. Return true if handled.
+     */
+    async writeEEPROM(_protocol: any, _offset: number, _data: Uint8Array): Promise<boolean> {
+        return false;
     }
 }
 

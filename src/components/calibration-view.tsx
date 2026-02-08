@@ -26,10 +26,16 @@ interface CachedBackup {
     offset: number;
 }
 
-export function CalibrationView({ connected, onConnect, onBusyChange }: {
+export function CalibrationView({ connected, onConnect, onBusyChange, deviceInfo }: {
     connected: boolean,
     onConnect: () => Promise<boolean>,
-    onBusyChange?: (isBusy: boolean) => void
+    onBusyChange?: (isBusy: boolean) => void,
+    deviceInfo?: {
+        version?: string;
+        portInfo?: any;
+        extended?: Record<string, string>;
+        telemetry?: any;
+    }
 }) {
     const { toast } = useToast()
     const { enableBackupCache } = usePreferences()
@@ -62,6 +68,15 @@ export function CalibrationView({ connected, onConnect, onBusyChange }: {
     useEffect(() => { localStorage.setItem("calib-serial-number", serialNumber); }, [serialNumber])
     useEffect(() => { localStorage.setItem("calib-backups", JSON.stringify(cachedBackups)); }, [cachedBackups])
 
+    // Autofill Serial from Device Info
+    useEffect(() => {
+        if (deviceInfo?.extended?.serial && !serialNumber) {
+            setSerialNumber(deviceInfo.extended.serial);
+        } else if (deviceInfo?.extended?.Serial && !serialNumber) {
+            setSerialNumber(deviceInfo.extended.Serial);
+        }
+    }, [deviceInfo, serialNumber]);
+
     const logEndRef = useRef<HTMLDivElement>(null)
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [logs])
 
@@ -70,7 +85,7 @@ export function CalibrationView({ connected, onConnect, onBusyChange }: {
         setIsDetecting(true);
         try {
             const info = await protocol.identify(1500);
-            const versionMatch = info.blVersion.match(/v?(\d+)\.(\d+)\.(\d+)/);
+            const versionMatch = info.firmwareVersion.match(/v?(\d+)\.(\d+)\.(\d+)/);
             if (versionMatch) {
                 const major = parseInt(versionMatch[1], 10);
                 setSelectedOffset(major >= 5 ? 0xB000 : 0x1E00);

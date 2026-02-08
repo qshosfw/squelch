@@ -24,6 +24,8 @@ import {
     ExternalLink,
     Key,
     FolderGit2,
+    Hammer,
+    AlertTriangle,
     LucideIcon
 } from 'lucide-react';
 
@@ -32,7 +34,7 @@ interface PreferencesDialogProps {
     onOpenChange: (open: boolean) => void
 }
 
-type TabId = 'appearance' | 'connection' | 'github';
+type TabId = 'appearance' | 'connection' | 'github' | 'developer';
 
 interface NavItem {
     id: TabId;
@@ -44,6 +46,7 @@ const navItems: NavItem[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'connection', label: 'Connection', icon: Usb },
     { id: 'github', label: 'GitHub', icon: Github },
+    { id: 'developer', label: 'Developer', icon: Hammer },
 ];
 
 // Parse repo string to get owner and repo name
@@ -116,7 +119,9 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
         addCustomRepo,
         removeCustomRepo,
         profileSwitchMode,
-        setProfileSwitchMode
+        setProfileSwitchMode,
+        telemetryInterval,
+        setTelemetryInterval
     } = usePreferences()
 
     const [activeTab, setActiveTab] = useState<TabId>('appearance')
@@ -309,6 +314,29 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
 
                                     <Separator />
 
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <Label className="text-sm font-medium">Telemetry Polling</Label>
+                                            <p className="text-sm text-muted-foreground">
+                                                How often to refresh signal and battery status.
+                                            </p>
+                                        </div>
+                                        <Select value={String(telemetryInterval)} onValueChange={(v) => setTelemetryInterval(parseInt(v))}>
+                                            <SelectTrigger className="w-[140px]">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="500">Fast (0.5s)</SelectItem>
+                                                <SelectItem value="1000">Normal (1s)</SelectItem>
+                                                <SelectItem value="2000">Standard (2s)</SelectItem>
+                                                <SelectItem value="5000">Slow (5s)</SelectItem>
+                                                <SelectItem value="0">Off</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    <Separator />
+
                                     <div className="rounded-md bg-amber-500/10 p-4 border border-amber-500/20">
                                         <div className="flex items-center gap-2 text-amber-500 font-semibold mb-2">
                                             <Terminal className="h-4 w-4" />
@@ -446,6 +474,49 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                                     </div>
                                 </div>
                             )}
+
+                            {/* Developer Tab */}
+                            {activeTab === 'developer' && (
+                                <div className="space-y-6">
+                                    <div>
+                                        <h3 className="text-lg font-medium mb-1">Developer Options</h3>
+                                        <p className="text-sm text-muted-foreground mb-4">
+                                            Advanced settings for firmware development.
+                                        </p>
+                                    </div>
+
+                                    <Separator />
+
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between space-x-2">
+                                            <div className="space-y-0.5">
+                                                <div className="flex items-center gap-2">
+                                                    <Hammer className="h-4 w-4 text-primary" />
+                                                    <Label className="text-sm font-medium">Developer Mode</Label>
+                                                </div>
+                                                <p className="text-sm text-muted-foreground">
+                                                    Skip confirmation dialogs and enable advanced features.
+                                                </p>
+                                            </div>
+                                            <Switch
+                                                checked={usePreferences().developerMode}
+                                                onCheckedChange={usePreferences().setDeveloperMode}
+                                            />
+                                        </div>
+
+                                        <div className="p-4 rounded-lg border bg-amber-500/10 border-amber-500/20 space-y-2">
+                                            <p className="text-sm font-medium text-amber-500 flex items-center gap-2">
+                                                <AlertTriangle className="h-4 w-4" />
+                                                Warning
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                Developer mode allows direct flashing without confirmation.
+                                                Double-check your files before flashing!
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </ScrollArea>
 
                         {/* Footer */}
@@ -459,7 +530,7 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                         </div>
                     </div>
                 </div>
-            </DialogContent>
-        </Dialog>
+            </DialogContent >
+        </Dialog >
     )
 }

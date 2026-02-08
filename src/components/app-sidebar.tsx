@@ -11,7 +11,10 @@ import {
     FileCode,
     ArrowUpCircle,
     Play,
-    Square
+    Square,
+    ChevronDown,
+    Copy,
+    Check
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
@@ -44,9 +47,86 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
     deviceInfo?: {
         version?: string;
         portInfo?: PortInfo;
+        extended?: Record<string, string>;
+        telemetry?: any;
     }
     activeProfile?: RadioProfile | null
+    onProfileSelect?: (profile: RadioProfile) => void
 }
+
+
+
+const BatteryIcon = ({ percentage, isCharging }: { percentage: number, isCharging: boolean }) => {
+    const getFillColor = () => {
+        if (isCharging) return "bg-primary";
+        if (percentage < 20) return "bg-destructive";
+        return "bg-foreground/80";
+    };
+
+    return (
+        <div className="relative w-5 h-2.5 border border-muted-foreground/40 rounded-[2px] flex items-center p-[0.5px]">
+            <div
+                className={cn("h-full rounded-[1px] transition-all duration-500", getFillColor())}
+                style={{ width: `${Math.max(5, percentage)}%` }}
+            />
+            <div className="absolute -right-[2.5px] w-[1.5px] h-1 bg-muted-foreground/40 rounded-r-[1px]" />
+            {isCharging && (
+                <div className="absolute inset-x-0 -bottom-[1px] flex justify-center">
+                    <div className="h-[2px] w-[70%] bg-primary animate-pulse" />
+                </div>
+            )}
+        </div>
+    );
+};
+
+const SignalBar = ({ rssi_dBm }: { rssi_dBm: number }) => {
+    // RSSI roughly -120 to -60 range
+    const strength = Math.min(5, Math.max(0, Math.floor((rssi_dBm + 120) / 12)));
+
+    return (
+        <div className="flex items-end gap-[1.5px] h-3 px-1">
+            {[1, 2, 3, 4, 5].map((bar) => (
+                <div
+                    key={bar}
+                    className={cn(
+                        "w-[2.5px] rounded-t-[0.5px] transition-all duration-300",
+                        bar <= strength ? "bg-foreground" : "bg-muted-foreground/20"
+                    )}
+                    style={{ height: `${(bar / 5) * 100}%` }}
+                />
+            ))}
+        </div>
+    );
+};
+
+const CopyableField = ({ label, value }: { label: string, value: string }) => {
+    const [copied, setCopied] = React.useState(false);
+
+    const handleCopy = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(value);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div
+            className="group flex justify-between items-center text-[11px] cursor-pointer hover:bg-accent/50 px-1 py-0.5 -mx-1 rounded transition-colors"
+            onClick={handleCopy}
+            title={`Click to copy: ${value}`}
+        >
+            <span className="text-muted-foreground shrink-0">
+                {label}
+            </span>
+            <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-mono font-medium truncate">{value}</span>
+                <div className={cn("transition-all duration-200 shrink-0", copied ? "opacity-100 scale-100" : "opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100")}>
+                    {copied ? <Check className="w-2.5 h-2.5 text-green-500" /> : <Copy className="w-2.5 h-2.5 text-muted-foreground/40" />}
+                </div>
+            </div>
+        </div>
+    );
+};
 
 
 export function AppSidebar({
@@ -59,12 +139,16 @@ export function AppSidebar({
     isCollapsed,
     setIsCollapsed,
     deviceInfo,
-    activeProfile
+    activeProfile,
+    onProfileSelect
 }: SidebarProps) {
     const allProfiles = ModuleManager.getProfiles();
     const handleProfileChange = (id: string) => {
         const p = allProfiles.find(x => x.id === id);
-        if (p) ModuleManager.setActiveProfile(p);
+        if (p) {
+            if (onProfileSelect) onProfileSelect(p);
+            else ModuleManager.setActiveProfile(p);
+        }
     };
 
     const NavItem = ({ icon: Icon, label, value, shortcut, badge }: { icon: any, label: string, value: string, shortcut?: string, badge?: string }) => {
@@ -208,52 +292,139 @@ export function AppSidebar({
                             <div className="rounded-md border p-3 text-xs space-y-2 bg-muted/30">
                                 {connected && deviceInfo?.portInfo ? (
                                     <>
-                                        {/* Driver/Chip Info */}
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-muted-foreground">Driver</span>
-                                            <span className="font-medium truncate max-w-[120px]" title={deviceInfo.portInfo.label}>
-                                                {deviceInfo.portInfo.label}
-                                            </span>
+                                        {/* Core Device Info (Always visible when connected) */}
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between items-center text-[11px]">
+                                                <span className="text-muted-foreground">Driver</span>
+                                                <span className="font-medium truncate max-w-[120px]" title={deviceInfo.portInfo.label}>
+                                                    {deviceInfo.portInfo.label}
+                                                </span>
+                                            </div>
+                                            {deviceInfo.version && deviceInfo.version !== "Identifying..." && (
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-muted-foreground">
+                                                        {deviceInfo.version.startsWith("Bootloader") ? "Bootloader" : "Firmware"}
+                                                    </span>
+                                                    <span className="font-mono font-medium truncate max-w-[100px]" title={deviceInfo.version}>
+                                                        {deviceInfo.version.replace("Bootloader ", "")}
+                                                    </span>
+                                                </div>
+                                            )}
                                         </div>
-                                        {/* VID:PID */}
-                                        {deviceInfo.portInfo.vidPid && deviceInfo.portInfo.vidPid !== "????" && (
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-muted-foreground">VID:PID</span>
-                                                <span className="font-mono text-muted-foreground">{deviceInfo.portInfo.vidPid}</span>
-                                            </div>
+
+                                        {/* Hardware Section */}
+                                        {deviceInfo.extended && (
+                                            <Collapsible defaultOpen className="border-t pt-1.5 mt-1.5">
+                                                <CollapsibleTrigger className="flex w-full items-center justify-between group">
+                                                    <div className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">
+                                                        Hardware
+                                                    </div>
+                                                    <ChevronDown className="h-3 w-3 text-muted-foreground/50 transition-transform group-data-[state=closed]:-rotate-90" />
+                                                </CollapsibleTrigger>
+                                                <CollapsibleContent className="space-y-1 mt-1.5">
+                                                    <CopyableField label="Serial" value={deviceInfo.extended.serial || deviceInfo.extended.Serial || "---"} />
+                                                    <CopyableField label="MAC" value={deviceInfo.extended.mac || deviceInfo.extended.MAC || "---"} />
+                                                    {(deviceInfo.extended.commit || deviceInfo.extended.Commit) && (
+                                                        <CopyableField label="Commit" value={deviceInfo.extended.commit || deviceInfo.extended.Commit} />
+                                                    )}
+                                                    {(deviceInfo.extended.buildDate || deviceInfo.extended.date) && (
+                                                        <CopyableField label="Built" value={deviceInfo.extended.buildDate || deviceInfo.extended.date} />
+                                                    )}
+                                                </CollapsibleContent>
+                                            </Collapsible>
                                         )}
-                                        {/* Firmware Version */}
-                                        {deviceInfo.version && deviceInfo.version !== "Identifying..." && (
-                                            <div className="flex justify-between items-center border-t pt-2 mt-2">
-                                                <span className="text-muted-foreground">
-                                                    {deviceInfo.version.startsWith("Bootloader") ? "Bootloader" : "Firmware"}
-                                                </span>
-                                                <span className="font-mono font-medium truncate max-w-[100px]" title={deviceInfo.version}>
-                                                    {deviceInfo.version.replace("Bootloader ", "")}
-                                                </span>
-                                            </div>
+
+                                        {/* Battery Section */}
+                                        {deviceInfo.telemetry && (
+                                            <Collapsible defaultOpen className="border-t pt-1.5 mt-1.5">
+                                                <CollapsibleTrigger className="flex w-full items-center justify-between group">
+                                                    <div className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">
+                                                        Battery
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <BatteryIcon
+                                                            percentage={deviceInfo.telemetry.batteryPercentage ?? 0}
+                                                            isCharging={deviceInfo.telemetry.isCharging ?? false}
+                                                        />
+                                                        <ChevronDown className="h-3 w-3 text-muted-foreground/50 transition-transform group-data-[state=closed]:-rotate-90" />
+                                                    </div>
+                                                </CollapsibleTrigger>
+                                                <CollapsibleContent className="space-y-1.5 mt-2">
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-muted-foreground">Voltage</span>
+                                                        <span className="font-medium text-sm">{deviceInfo.telemetry.batteryVoltage?.toFixed(2)}V</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-muted-foreground">Level</span>
+                                                        <span className={cn("font-bold text-sm", (deviceInfo.telemetry.batteryPercentage ?? 100) < 20 ? "text-red-500" : "text-foreground")}>
+                                                            {deviceInfo.telemetry.batteryPercentage}%
+                                                        </span>
+                                                    </div>
+                                                </CollapsibleContent>
+                                            </Collapsible>
+                                        )}
+
+                                        {/* Signal Section */}
+                                        {deviceInfo.telemetry && (
+                                            <Collapsible defaultOpen className="border-t pt-1.5 mt-1.5">
+                                                <CollapsibleTrigger className="flex w-full items-center justify-between group">
+                                                    <div className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">
+                                                        Signal
+                                                    </div>
+                                                    <div className="flex items-center gap-1">
+                                                        {deviceInfo.telemetry.rssi_dBm !== undefined && (
+                                                            <SignalBar rssi_dBm={deviceInfo.telemetry.rssi_dBm} />
+                                                        )}
+                                                        <ChevronDown className="h-3 w-3 text-muted-foreground/50 transition-transform group-data-[state=closed]:-rotate-90" />
+                                                    </div>
+                                                </CollapsibleTrigger>
+                                                <CollapsibleContent className="space-y-1 mt-2">
+                                                    {deviceInfo.telemetry.rssi_dBm !== undefined && (
+                                                        <div className="flex justify-between items-center text-[11px]">
+                                                            <span className="text-muted-foreground">RSSI</span>
+                                                            <span className="font-bold text-sm">{deviceInfo.telemetry.rssi_dBm} dBm</span>
+                                                        </div>
+                                                    )}
+                                                    {deviceInfo.telemetry.gain_dB !== undefined && (
+                                                        <div className="flex justify-between items-center text-[11px]">
+                                                            <span className="text-muted-foreground">LNA Gain</span>
+                                                            <span className="font-medium text-sm">{deviceInfo.telemetry.gain_dB} dB</span>
+                                                        </div>
+                                                    )}
+                                                    {deviceInfo.telemetry.noiseIndicator !== undefined && (
+                                                        <div className="flex justify-between items-center text-[11px]">
+                                                            <span className="text-muted-foreground">Noise</span>
+                                                            <span className="font-medium text-sm">{deviceInfo.telemetry.noiseIndicator}</span>
+                                                        </div>
+                                                    )}
+                                                    {deviceInfo.telemetry.glitchIndicator !== undefined && deviceInfo.telemetry.glitchIndicator > 0 && (
+                                                        <div className="flex justify-between items-center text-[11px]">
+                                                            <span className="text-muted-foreground">Glitches</span>
+                                                            <span className="font-bold text-sm">{deviceInfo.telemetry.glitchIndicator}</span>
+                                                        </div>
+                                                    )}
+                                                </CollapsibleContent>
+                                            </Collapsible>
                                         )}
 
                                         {/* Profile Selector */}
-                                        {connected && (
-                                            <div className="pt-2 mt-2 border-t space-y-1">
-                                                <div className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wider">
-                                                    Active Profile
-                                                </div>
-                                                <Select value={activeProfile?.id || ""} onValueChange={handleProfileChange}>
-                                                    <SelectTrigger className="h-7 text-xs bg-background">
-                                                        <SelectValue placeholder="Select Profile..." />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {allProfiles.map(p => (
-                                                            <SelectItem key={p.id} value={p.id} className="text-xs">
-                                                                {p.name}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
+                                        <div className="pt-2 mt-2 border-t space-y-1">
+                                            <div className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">
+                                                Profile
                                             </div>
-                                        )}
+                                            <Select value={activeProfile?.id || ""} onValueChange={handleProfileChange}>
+                                                <SelectTrigger className="h-7 text-xs bg-background border-none hover:bg-accent ring-offset-0 focus:ring-0 px-1">
+                                                    <SelectValue placeholder="Select..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {allProfiles.map(p => (
+                                                        <SelectItem key={p.id} value={p.id} className="text-xs">
+                                                            {p.name}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
                                     </>
                                 ) : (
                                     <div className="text-center text-muted-foreground py-2">

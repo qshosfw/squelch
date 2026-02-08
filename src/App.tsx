@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Toaster } from "@/components/ui/toaster"
 import { useToast } from "@/hooks/use-toast"
+import { ToastAction } from "@/components/ui/toast"
 import { protocol, type PortInfo, type SerialStats } from "@/lib/protocol"
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
@@ -20,13 +21,13 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, Con
 import { Zap, Github, Terminal, Shield, ChevronRight, Settings } from "lucide-react"
 import { usePreferences } from "@/contexts/PreferencesContext"
 import { PreferencesDialog } from "@/components/preferences-dialog"
-import { ComingSoonView } from "./components/coming-soon-view"
-import { Database } from "lucide-react"
 import { RemoteView } from "./components/remote/RemoteView"
+import { MemoryView } from "./components/memory-view"
 import { PWAReloadPrompt } from "./components/pwa-reload-prompt"
 import { DynamicFavicon } from "./components/dynamic-favicon"
 import { ModuleManager } from "@/lib/framework/module-manager"
-import { type RadioProfile } from "@/lib/framework/module-interface"
+import { RadioProfile } from "@/lib/framework/module-interface"
+import { cn } from "@/lib/utils"
 
 import { useTheme } from "@/components/theme-provider"
 
@@ -40,13 +41,20 @@ import {
 } from "@/components/ui/dialog"
 import { useRef, useEffect } from "react"
 import { FlashProgressDialog, type LogEntry } from "./components/flash-progress-dialog"
+import { parseFirmwareFile, ParsedFirmware } from './lib/firmware-parser';
+import { FirmwareMetadataDialog } from './components/firmware-metadata-dialog';
 
 function App() {
     const [connected, setConnected] = useState(false)
     const [currentView, setCurrentView] = useState("overview")
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
     const [isBusy, setIsBusy] = useState(false)
-    const [deviceInfo, setDeviceInfo] = useState<{ version: string, portInfo: PortInfo } | undefined>(undefined);
+    const [deviceInfo, setDeviceInfo] = useState<{
+        version: string,
+        portInfo: PortInfo,
+        extended?: Record<string, string>,
+        telemetry?: any
+    } | undefined>(undefined);
     const [isPreferencesOpen, setIsPreferencesOpen] = useState(false)
     const [activeProfile, setActiveProfile] = useState<RadioProfile | null>(ModuleManager.getActiveProfile());
 
@@ -56,6 +64,8 @@ function App() {
 
     // Fast Flash State
     const [pendingFile, setPendingFile] = useState<File | null>(null);
+    const [parsedFirmware, setParsedFirmware] = useState<ParsedFirmware | null>(null);
+    const [showMetadataDialog, setShowMetadataDialog] = useState(false);
     const [showFlashConfirm, setShowFlashConfirm] = useState(false);
     const [isFlashing, setIsFlashing] = useState(false);
     const [flashProgress, setFlashProgress] = useState(0);
@@ -70,7 +80,7 @@ function App() {
 
     // generateSW strategy if not default? Defaults are usually fine.
     const { toast } = useToast()
-    const { setBootloaderDetected, autoSwitchToFlasher } = usePreferences()
+    const { setBootloaderDetected, autoSwitchToFlasher, telemetryInterval, developerMode, profileSwitchMode } = usePreferences()
     const { theme, setTheme } = useTheme()
 
     // Listen for unexpected disconnects
@@ -137,6 +147,28 @@ function App() {
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
     }, [isBusy, isFlashing]);
 
+    // Telemetry Polling
+    useEffect(() => {
+        if (!connected || !activeProfile || !telemetryInterval || telemetryInterval <= 0) return;
+
+        const intervalId = setInterval(async () => {
+            if (isBusy || isFlashing) return;
+            try {
+                const telemetry = await activeProfile.getTelemetry(protocol);
+                if (telemetry) {
+                    setDeviceInfo(prev => prev ? {
+                        ...prev,
+                        telemetry: { ...prev.telemetry, ...telemetry }
+                    } : prev);
+                }
+            } catch (e) {
+                console.warn("Telemetry poll failed", e);
+            }
+        }, telemetryInterval);
+
+        return () => clearInterval(intervalId);
+    }, [connected, activeProfile, telemetryInterval, isBusy, isFlashing]);
+
     const handleConnect = async (silent = false) => {
         // Check WebSerial support first
         if (!('serial' in navigator)) {
@@ -176,27 +208,72 @@ function App() {
 
             // Attempt identification
             try {
-                const info = await protocol.identifyDevice(2000)
-                const isBootloader = info.blVersion.startsWith("Bootloader")
+                const info = await protocol.identify(2000)
+                const isBootloader = info.firmwareVersion.startsWith("Bootloader")
                 setBootloaderDetected(isBootloader)
-                setDeviceInfo({ version: info.blVersion, portInfo });
 
-                // Detect Profile
-                const matchedProfile = ModuleManager.detectProfile(info.blVersion);
-                if (matchedProfile) {
-                    ModuleManager.setActiveProfile(matchedProfile);
-                    if (!silent) toast({ title: "Profile Activated", description: `Active: ${matchedProfile.name}` });
-                } else {
-                    const stock = ModuleManager.detectProfile("stock");
-                    if (stock) ModuleManager.setActiveProfile(stock);
+                setDeviceInfo(prev => ({
+                    ...prev!,
+                    version: info.firmwareVersion
+                }));
+
+                // Detect & Switch Profile
+                const detectedProfile = ModuleManager.detectProfile(info.firmwareVersion) || ModuleManager.getProfiles().find(p => p.id === 'stock-uvk5v3');
+
+                if (detectedProfile) {
+                    const current = ModuleManager.getActiveProfile();
+
+                    const switchProfile = async () => {
+                        // Deactivate previous if needed
+                        if (current && current.id !== detectedProfile.id) {
+                            current.onDeactivate();
+                        }
+
+                        // Activate new
+                        ModuleManager.setActiveProfile(detectedProfile);
+                        detectedProfile.onActivate({
+                            toast: (t, d, type) => toast({ title: t, description: d, variant: type as any }),
+                            navigate: setCurrentView
+                        });
+
+                        // Fetch Extended Info
+                        try {
+                            const extended = await detectedProfile.getExtendedInfo(protocol);
+                            if (extended) {
+                                setDeviceInfo(prev => prev ? { ...prev, extended } : prev);
+                            }
+                        } catch (e) {
+                            console.warn("Extended info fetch failed", e);
+                        }
+
+                        if (!silent) toast({ title: "Profile Activated", description: `Active: ${detectedProfile.name}` });
+                    };
+
+                    // Handle Switch Mode
+                    const isSameProfile = current && current.id === detectedProfile.id;
+
+                    if (isSameProfile || profileSwitchMode === 'auto' || !current) {
+                        await switchProfile();
+                    } else if (profileSwitchMode === 'prompt' && !isSameProfile) {
+                        toast({
+                            title: "New Profile Detected",
+                            description: `Device matches profile: ${detectedProfile.name}. Switch?`,
+                            action: (
+                                <ToastAction altText="Switch" onClick={switchProfile}>Switch</ToastAction>
+                            ),
+                        });
+                    } else if (profileSwitchMode === 'manual') {
+                        // Do nothing, just notification
+                        if (!silent) toast({ title: "Device Detected", description: `Matched: ${detectedProfile.name}` });
+                    }
                 }
 
-                if (!silent) toast({ title: "Device Identified", description: `Version: ${info.blVersion}` })
+                if (!silent) toast({ title: "Device Identified", description: `Version: ${info.firmwareVersion}` })
             } catch (e) {
                 console.warn("Identification failed", e)
                 setDeviceInfo(prev => {
                     if (prev?.version?.startsWith("Bootloader")) return prev;
-                    return { version: "Unknown Device", portInfo };
+                    return { ...prev!, version: "Unknown Device" };
                 });
             }
             return true;
@@ -247,25 +324,46 @@ function App() {
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        setPendingFile(file);
 
-        // Reset input so same file can be selected again if needed
-        e.target.value = '';
+        try {
+            const parsed = await parseFirmwareFile(file);
+            setParsedFirmware(parsed);
+            setPendingFile(file);
 
-        // Check connection
-        if (!connected) {
-            const success = await handleConnect();
-            if (success) {
-                setShowFlashConfirm(true);
+            // Reset input so same file can be selected again
+            e.target.value = '';
+
+            const proceed = async () => {
+                if (developerMode) {
+                    performFlash({ type: parsed.type, data: parsed.data, metadata: parsed.metadata });
+                } else {
+                    setShowMetadataDialog(true);
+                }
+            };
+
+            // Check connection
+            if (!connected) {
+                const success = await handleConnect();
+                if (!success) return;
             }
-        } else {
-            setShowFlashConfirm(true);
+
+            await proceed();
+
+        } catch (err: any) {
+            toast({
+                title: "Error parsing firmware",
+                description: err.message,
+                variant: "destructive"
+            });
         }
     }
 
-    const performFlash = async () => {
-        if (!pendingFile) return;
+    const performFlash = async (firmwareData?: ParsedFirmware) => {
+        const targetFirmware = firmwareData || parsedFirmware;
+        if (!targetFirmware && !pendingFile) return;
+
         setShowFlashConfirm(false);
+        setShowMetadataDialog(false);
         setIsFlashing(true);
         setFlashProgress(0);
         setFlashStep("Initializing...");
@@ -291,8 +389,16 @@ function App() {
         };
 
         try {
-            const buffer = await pendingFile.arrayBuffer();
-            const data = new Uint8Array(buffer);
+            let data: Uint8Array;
+            if (targetFirmware) {
+                data = targetFirmware.data;
+            } else if (pendingFile) {
+                const buffer = await pendingFile.arrayBuffer();
+                data = new Uint8Array(buffer);
+            } else {
+                throw new Error("No firmware data available");
+            }
+
             // Hook up progress
             protocol.onProgress = (p) => setFlashProgress(p);
             protocol.onStepChange = (s) => setFlashStep(s);
@@ -382,6 +488,30 @@ function App() {
     const isDarkMode = theme === "dark";
     const toggleDarkMode = () => setTheme(isDarkMode ? "light" : "dark");
 
+    // Telemetry Polling (Secondary)
+    useEffect(() => {
+        if (!connected || !activeProfile || isBusy || isFlashing) return;
+
+        const poll = async () => {
+            try {
+                const telemetry = await activeProfile.getTelemetry(protocol);
+                if (telemetry) {
+                    setDeviceInfo(prev => prev ? {
+                        ...prev,
+                        telemetry: { ...prev.telemetry, ...telemetry }
+                    } : prev);
+                }
+            } catch (e) {
+                // silent
+            }
+        };
+
+        const timer = setInterval(poll, 5000); // Poll every 5 seconds
+        poll(); // Initial poll
+
+        return () => clearInterval(timer);
+    }, [connected, activeProfile, isBusy, isFlashing]);
+
     return (
         <TooltipProvider>
             <DynamicFavicon connected={connected} isBusy={isBusy || isFlashing} />
@@ -405,12 +535,24 @@ function App() {
                     </DialogHeader>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setPendingFile(null)}>Cancel</Button>
-                        <Button onClick={performFlash}>Flash Firmware</Button>
+                        <Button onClick={() => performFlash()}>Flash Firmware</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
 
             {/* Unified Flash Progress Dialog */}
+            <FirmwareMetadataDialog
+                open={showMetadataDialog}
+                onOpenChange={setShowMetadataDialog}
+                metadata={parsedFirmware?.metadata}
+                onConfirm={() => performFlash()}
+                onCancel={() => {
+                    setShowMetadataDialog(false);
+                    setParsedFirmware(null);
+                    setPendingFile(null);
+                }}
+            />
+
             <FlashProgressDialog
                 isOpen={isFlashing || flashResult !== null}
                 onOpenChange={(open) => {
@@ -509,26 +651,54 @@ function App() {
                         setIsCollapsed={setIsSidebarCollapsed}
                         deviceInfo={deviceInfo}
                         activeProfile={activeProfile}
+                        onProfileSelect={async (p) => {
+                            ModuleManager.setActiveProfile(p);
+                            if (protocol && connected) {
+                                try {
+                                    const extended = await p.getExtendedInfo(protocol);
+                                    if (extended) {
+                                        setDeviceInfo(prev => prev ? { ...prev, extended } : prev);
+                                        toast({ title: "Profile Activated", description: `Switched to ${p.name}` });
+                                    }
+                                } catch (e) {
+                                    console.warn("Failed to fetch info on profile switch", e);
+                                }
+                            }
+                        }}
                     />
 
                     <main className="flex-1 overflow-hidden bg-muted/10 relative flex flex-col">
                         {/* Context Menu Wrapper for the whole main area for global quick actions */}
                         <ContextMenu>
                             <ContextMenuTrigger className="flex-1 flex flex-col min-h-0">
-                                <div className="flex-1 flex flex-col p-4 md:p-8 min-h-0">
-                                    <div className="mx-auto w-full max-w-6xl flex-1 flex flex-col min-h-0 space-y-8">
-                                        <div className="flex items-center justify-between shrink-0">
-                                            <div className="space-y-1">
-                                                <h2 className="text-2xl font-bold tracking-tight capitalize">{currentView}</h2>
-                                                <p className="text-sm text-muted-foreground">
-                                                    Manage your radio {currentView === 'overview' ? 'system status' : currentView}.
-                                                </p>
+                                <div className={cn(
+                                    "flex-1 flex flex-col min-h-0",
+                                    currentView !== 'memories' && "p-4 md:p-8"
+                                )}>
+                                    <div className={cn(
+                                        "w-full flex-1 flex flex-col min-h-0",
+                                        currentView !== 'memories' ? "mx-auto max-w-6xl space-y-8" : "space-y-0"
+                                    )}>
+                                        {currentView !== 'memories' && (
+                                            <div className="flex items-center justify-between shrink-0">
+                                                <div className="space-y-1">
+                                                    <h2 className="text-2xl font-bold tracking-tight capitalize">{currentView}</h2>
+                                                    <p className="text-sm text-muted-foreground">
+                                                        Manage your radio {currentView === 'overview' ? 'system status' : currentView}.
+                                                    </p>
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
 
                                         {/* Content Rendering based on currentView */}
-                                        <div className="flex-1 min-h-0 overflow-y-auto pr-2 -mr-2">
-                                            <div className="space-y-4 h-full">
+                                        <div className={cn(
+                                            "flex-1 min-h-0",
+                                            currentView !== 'memories' ? "overflow-y-auto pr-2 -mr-2" : "flex flex-col"
+                                        )}>
+                                            <div className={cn(
+                                                "h-full",
+                                                currentView !== 'memories' && "space-y-4"
+                                            )}>
                                                 {currentView === 'overview' && (
                                                     <div className="space-y-6">
                                                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -595,10 +765,10 @@ function App() {
                                                 )}
 
                                                 {currentView === 'memories' && (
-                                                    <ComingSoonView
-                                                        title="Memory Manager"
-                                                        description="A powerful channel editor for your radio. Read, edit, and organize your memory channels with ease. Support for CHIRP imports and batch editing is in the works."
-                                                        icon={Database}
+                                                    <MemoryView
+                                                        connected={connected}
+                                                        activeProfile={activeProfile}
+                                                        onBusyChange={setIsBusy}
                                                     />
                                                 )}
 
@@ -611,7 +781,7 @@ function App() {
                                                 )}
 
                                                 {currentView === 'calib' && (
-                                                    <CalibrationView connected={connected} onConnect={handleConnect} onBusyChange={setIsBusy} />
+                                                    <CalibrationView connected={connected} onConnect={handleConnect} onBusyChange={setIsBusy} deviceInfo={deviceInfo} />
                                                 )}
 
                                                 {currentView === 'config' && (

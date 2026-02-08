@@ -14,6 +14,8 @@ export const MSG_READ_EEPROM_RESP = 0x051C;
 export const MSG_WRITE_EEPROM = 0x051D;
 export const MSG_WRITE_EEPROM_RESP = 0x051E;
 export const MSG_NOTIFY_BL_VER = 0x0530;
+export const MSG_GET_CPU_ID = 0x0533;
+export const MSG_GET_CPU_ID_RESP = 0x0534;
 export const MSG_REBOOT = 0x05DD;
 
 // Extended F4HWN / IJV Commands

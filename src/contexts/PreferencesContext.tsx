@@ -13,11 +13,12 @@ interface Preferences {
     // Developer
     githubToken: string;
     customRepos: string[];
+    developerMode: boolean;
     // Internal
     bootloaderDetected: boolean;
     enableBackupCache: boolean;
-    calibrationOffsetLegacy: boolean;
     autoSwitchToFlasher: boolean;
+    telemetryInterval: number;
 }
 
 interface PreferencesContextType extends Preferences {
@@ -26,11 +27,13 @@ interface PreferencesContextType extends Preferences {
     setGithubToken: (token: string) => void;
     addCustomRepo: (repo: string) => void;
     removeCustomRepo: (repo: string) => void;
+    setDeveloperMode: (enabled: boolean) => void;
     setBootloaderDetected: (detected: boolean) => void;
     setAutoConnect: (enabled: boolean) => void;
     setEnableBackupCache: (enabled: boolean) => void;
     setProfileSwitchMode: (mode: 'auto' | 'prompt' | 'manual') => void;
     setAutoSwitchToFlasher: (enabled: boolean) => void;
+    setTelemetryInterval: (interval: number) => void;
 }
 
 const defaultPreferences: Preferences = {
@@ -38,12 +41,13 @@ const defaultPreferences: Preferences = {
     locale: detectBrowserLocale(),
     githubToken: "",
     customRepos: [],
+    developerMode: false,
     bootloaderDetected: false,
     autoConnect: false,
     enableBackupCache: true,
     profileSwitchMode: 'auto',
-    calibrationOffsetLegacy: false,
-    autoSwitchToFlasher: true
+    autoSwitchToFlasher: true,
+    telemetryInterval: 2000
 };
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
@@ -131,11 +135,13 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
             setGithubToken,
             addCustomRepo,
             removeCustomRepo,
+            setDeveloperMode: (enabled: boolean) => setPreferences(prev => ({ ...prev, developerMode: enabled })),
             setBootloaderDetected,
             setAutoConnect,
             setEnableBackupCache,
             setProfileSwitchMode,
-            setAutoSwitchToFlasher
+            setAutoSwitchToFlasher,
+            setTelemetryInterval: (interval: number) => setPreferences(prev => ({ ...prev, telemetryInterval: interval }))
         }}>
             {children}
         </PreferencesContext.Provider>
