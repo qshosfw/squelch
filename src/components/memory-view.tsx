@@ -1,13 +1,13 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { Channel, RadioProfile } from "@/lib/framework/module-interface"
 import { protocol } from "@/lib/protocol"
 import { Button } from "@/components/ui/button"
 import { MemoryTable } from "./memory-table/memory-table"
 import { exportToCSV, importFromCSV } from "@/lib/csv-utils"
 import { useToast } from "@/hooks/use-toast"
-import { FileUp, FileDown, Upload, Download, Loader2, Search, Columns2, ChevronLeft, ChevronRight } from "lucide-react"
+import { FileUp, FileDown, Upload, Download, Loader2, Search, Columns2, ChevronLeft, ChevronRight, FileSpreadsheet, FileCode } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 import {
@@ -17,17 +17,27 @@ import {
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
+    DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
+import { QSHFile, TAG_G_TITLE, TAG_G_AUTHOR, TAG_G_TYPE, TAG_G_DATE, TAG_D_LABEL, TAG_D_START_ADDR, TAG_D_END_ADDR, TAG_D_CH_COUNT, TAG_D_CH_NAMES, TAG_ID_RADIO_UID, TAG_ID_LABEL } from "@/lib/qsh"
 
 interface MemoryViewProps {
     connected: boolean
     activeProfile: RadioProfile | null
     onBusyChange: (busy: boolean) => void
+    pendingFile?: File | null
+    onPendingFileConsumed?: () => void
+    deviceInfo?: { version: string, extended?: Record<string, string> }
+    originalChannels?: Channel[]
+    onOriginalChannelsChange?: (channels: Channel[]) => void
+    channels: Channel[]
+    onChannelsChange: (channels: Channel[] | ((prev: Channel[]) => Channel[])) => void
+    onChannelsReplace?: (channels: Channel[] | ((prev: Channel[]) => Channel[])) => void
+    onChannelsReset?: (channels: Channel[]) => void
 }
 
-export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryViewProps) {
-    const [channels, setChannels] = useState<Channel[]>([])
+export function MemoryView({ connected, activeProfile, onBusyChange, pendingFile, onPendingFileConsumed, deviceInfo, originalChannels, onOriginalChannelsChange, channels, onChannelsChange, onChannelsReplace, onChannelsReset }: MemoryViewProps) {
     const [loading, setLoading] = useState<"read" | "write" | null>(null)
     const [progress, setProgress] = useState(0)
     const [page, setPage] = useState(0)
@@ -37,6 +47,7 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
         rxTone: true, txTone: true, step: true, scan: true, scram: true,
         comp: true, pttid: true, busy: true, rev: true, sl1: true, sl2: true, sl3: true
     })
+    const [hasRead, setHasRead] = useState(false)
     const { toast } = useToast()
 
     const handleRead = useCallback(async () => {
@@ -48,7 +59,9 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
         setLoading("read")
         onBusyChange(true)
         setProgress(0)
-        setChannels([])
+        if (onChannelsReset) onChannelsReset([])
+        else onChannelsChange([])
+        setHasRead(false)
 
         try {
             toast({ title: "Reading Memories", description: `Reading ${activeProfile.channelCount} channels...` });
@@ -56,9 +69,14 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
             const results = await activeProfile.readChannels(
                 protocol,
                 (p) => setProgress(p),
-                (batch) => setChannels(prev => [...prev, ...batch])
+                (batch) => {
+                    if (onChannelsReplace) onChannelsReplace(prev => [...prev, ...batch])
+                    else onChannelsChange(prev => [...prev, ...batch])
+                }
             );
 
+            setHasRead(true)
+            onOriginalChannelsChange?.(results)
             toast({ title: "Read Complete", description: `Loaded ${results.length} channels.` })
         } catch (e) {
             console.error(e)
@@ -86,6 +104,7 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
             );
 
             toast({ title: "Write Complete" })
+            onOriginalChannelsChange?.(channels)
         } catch (e) {
             console.error(e);
             toast({ title: "Write Failed", variant: "destructive" })
@@ -97,7 +116,7 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
     }, [connected, activeProfile, toast, onBusyChange, channels])
 
     const handleUpdate = (index: number, field: keyof Channel, value: any) => {
-        setChannels(prev => {
+        onChannelsChange(prev => {
             const next = [...prev];
             const idx = next.findIndex(c => c.index === index);
             if (idx !== -1) {
@@ -107,7 +126,7 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
         });
     }
 
-    const handleExport = () => {
+    const handleExportCSV = () => {
         if (channels.length === 0) return;
         const csv = exportToCSV(channels);
         const blob = new Blob([csv], { type: "text/csv" });
@@ -119,39 +138,255 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
         URL.revokeObjectURL(url);
     }
 
-    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const handleExportQSH = async () => {
+        if (channels.length === 0 || !activeProfile) return;
 
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            const text = evt.target?.result as string;
-            try {
+        try {
+            const qsh = new QSHFile();
+            const now = new Date();
+
+            qsh.setGlobal({
+                [TAG_G_TITLE]: `Channels Backup (${activeProfile.name})`,
+                [TAG_G_AUTHOR]: "Squelch User",
+                [TAG_G_TYPE]: "channels",
+                [TAG_G_DATE]: Math.floor(now.getTime() / 1000)
+            });
+
+            // Fetch numeric UID if possible
+            let numericUid: bigint | Uint8Array | null = null;
+            if (activeProfile && connected && protocol) {
+                try {
+                    numericUid = await activeProfile.getNumericUID(protocol);
+                } catch (err) { }
+            }
+
+            const mapping = activeProfile.memoryMapping;
+            const mainRange = mapping.channels;
+            if (!mainRange) throw new Error("Profile does not define channel memory range");
+
+            // Allocate buffer for the entire range
+            const buffer = new Uint8Array(mainRange.size);
+            buffer.fill(0xFF); // Default to empty/erased
+
+            // Determine if we have extra ranges (like names on some firmwares)
+            const extraRanges = mapping.extra || {};
+            const extraBuffers: Record<string, Uint8Array> = {};
+
+            for (const [key, range] of Object.entries(extraRanges)) {
+                extraBuffers[key] = new Uint8Array(range.size);
+                extraBuffers[key].fill(0xFF);
+            }
+
+            // Encode channels into the buffer
+            channels.forEach((c, i) => {
+                const offset = i * mainRange.stride;
+                if (offset + mainRange.stride <= buffer.length) {
+                    const block = buffer.subarray(offset, offset + mainRange.stride);
+
+                    // Prepare aux items
+                    const aux: any = {};
+                    if (extraBuffers['names']) {
+                        const nameStride = 16;
+                        aux.name = extraBuffers['names'].subarray(i * nameStride, Math.min((i + 1) * nameStride, extraBuffers['names'].length));
+                    }
+
+                    activeProfile.encodeChannel(c, block, i + 1, aux);
+                }
+            });
+
+            // Add Main Channels Blob
+            qsh.addBlob(buffer, {
+                [TAG_G_TYPE]: "channels",
+                [TAG_D_LABEL]: "Main Channel Data",
+                [TAG_D_START_ADDR]: mainRange.start,
+                [TAG_D_END_ADDR]: mainRange.start + mainRange.size,
+                [TAG_D_CH_COUNT]: channels.length,
+                [TAG_D_CH_NAMES]: channels.map(c => c.empty ? "" : (c.name || "")).join(","),
+                [TAG_ID_RADIO_UID]: (typeof numericUid === 'bigint') ? numericUid.toString() : "",
+                [TAG_ID_LABEL]: deviceInfo?.version || activeProfile.name
+            });
+
+            // Add Extras
+            for (const [key, range] of Object.entries(extraRanges)) {
+                if (extraBuffers[key]) {
+                    qsh.addBlob(extraBuffers[key], {
+                        [TAG_G_TYPE]: "channels",
+                        [TAG_D_LABEL]: key,
+                        [TAG_D_START_ADDR]: range.start,
+                        [TAG_D_END_ADDR]: range.start + range.size,
+                    });
+                }
+            }
+
+            const qshBytes = await qsh.toUint8Array();
+            const blob = new Blob([qshBytes.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const dateStr = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
+            a.download = `channels_${activeProfile.name.toLowerCase().replace(/\s+/g, '_')}_${dateStr}.qsh`;
+            a.click();
+            URL.revokeObjectURL(url);
+            toast({ title: "Export Successful", description: "Channels saved as binary QSH." });
+        } catch (e) {
+            console.error(e);
+            toast({ title: "Export Failed", description: String(e), variant: "destructive" });
+        }
+    }
+
+    const processImportFile = useCallback(async (file: File) => {
+        if (!activeProfile) {
+            toast({
+                title: "No Profile Selected",
+                description: "Please select a radio profile before importing channels.",
+                variant: "destructive"
+            });
+            return;
+        }
+
+        try {
+            if (file.name.endsWith(".csv") || file.name.endsWith(".json")) {
+                const text = await file.text();
                 const imported = importFromCSV(text);
-                setChannels(prev => {
+                onChannelsChange(prev => {
                     let base = prev.length > 0 ? [...prev] : [];
                     if (base.length === 0 && activeProfile) {
                         for (let i = 0; i < activeProfile.channelCount; i++) {
                             base.push({ index: i + 1, name: "", rxFreq: 0, offset: 0, mode: 'FM', power: 'Low', scanList: 'None', empty: true });
                         }
                     }
-
                     imported.forEach(imp => {
                         const idx = base.findIndex(c => c.index === imp.index);
-                        if (idx !== -1) {
-                            base[idx] = { ...base[idx], ...imp, empty: false };
-                        }
+                        if (idx !== -1) base[idx] = { ...base[idx], ...imp, empty: false };
                     });
+
+                    onOriginalChannelsChange?.(base);
                     return base;
                 });
-
+                setHasRead(true);
                 toast({ title: "Import Successful", description: `Updated ${imported.length} channels.` });
-            } catch (e) {
-                toast({ title: "Import Failed", variant: "destructive" });
+            } else {
+                // Binary or QSH Import
+                const buffer = new Uint8Array(await file.arrayBuffer() as ArrayBuffer);
+                let channelData: Uint8Array = buffer;
+                let nameData: Uint8Array | undefined = undefined;
+
+                // Check for QSH Magic Bytes
+                const isQshSignature = buffer.length >= 8 && buffer[0] === 0xe6 && buffer[1] === 0x51 && buffer[2] === 0x53 && buffer[3] === 0x48;
+
+                // Try to parse as QSH
+                let qsh: QSHFile | null = null;
+                try {
+                    qsh = await QSHFile.fromUint8Array(buffer as any);
+                } catch (e) { console.error("QSH Parse Error", e); }
+
+
+                if (isQshSignature && !qsh) {
+                    toast({ title: "Import Error", description: "QSH file integrity check failed or file is corrupted.", variant: "destructive" });
+                    return;
+                }
+
+                if (qsh) {
+                    // It's a QSH file, find our blobs
+                    const map = activeProfile.memoryMapping;
+                    const channelBlob = qsh.blobs.find(b => b.metadata[TAG_D_START_ADDR] === map.channels.start);
+
+                    if (channelBlob) {
+                        channelData = channelBlob.data;
+                        toast({ title: "QSH Detected", description: "Found channel data in container." });
+                    } else {
+                        // Improved Fuzzy Search
+                        const candidates = qsh.blobs.filter(b => b.metadata[TAG_G_TYPE] === "channels");
+
+                        // 1. Try label containing "main"
+                        let best = candidates.find(b =>
+                            typeof b.metadata[TAG_D_LABEL] === 'string' &&
+                            b.metadata[TAG_D_LABEL].toLowerCase().includes("main")
+                        );
+
+                        // 2. Try exact size match (if not found yet)
+                        if (!best) {
+                            best = candidates.find(b => b.data.length === map.channels.size);
+                        }
+
+                        // 3. Fallback to first candidate that ISN'T names/attributes (heuristic)
+                        if (!best && candidates.length > 0) {
+                            best = candidates.find(b => {
+                                const label = (b.metadata[TAG_D_LABEL] as string || "").toLowerCase();
+                                return !label.includes("name") && !label.includes("attr");
+                            });
+                        }
+
+                        // 4. Last resort
+                        if (!best && candidates.length > 0) best = candidates[0];
+
+                        if (best) {
+                            channelData = best.data;
+                            toast({ title: "QSH Detected", description: `Found channel data (fuzzy: ${best.metadata[TAG_D_LABEL] || "unnamed"}).` });
+                        } else {
+                            toast({ title: "Import Error", description: "Valid QSH container but no matching channel data found.", variant: "destructive" });
+                            return;
+                        }
+                    }
+
+                    if (map.extra?.names) {
+                        const nameBlob = qsh.blobs.find(b => b.metadata[TAG_D_START_ADDR] === map.extra!.names.start);
+                        if (nameBlob) {
+                            nameData = nameBlob.data;
+                        }
+                    }
+                }
+
+                // Decode
+                const range = activeProfile.memoryMapping.channels;
+                if (!range) throw new Error("Profile does not support binary channel import");
+
+                toast({ title: "Decoding Channels", description: "Parsing binary data..." });
+
+                const decoded: Channel[] = [];
+                for (let i = 0; i < activeProfile.channelCount; i++) {
+                    const offset = i * activeProfile.channelStride;
+                    // Check if we have enough data
+                    if (offset + activeProfile.channelStride <= channelData.length) {
+                        const block = channelData.subarray(offset, offset + activeProfile.channelStride);
+
+                        let aux: any = undefined;
+                        if (nameData) {
+                            const nameStride = 16; // Standardize this?
+                            if ((i + 1) * nameStride <= nameData.length) {
+                                aux = { name: nameData.subarray(i * nameStride, (i + 1) * nameStride) };
+                            }
+                        }
+
+                        decoded.push(activeProfile.decodeChannel(block, i + 1, aux));
+                    }
+                }
+
+                onChannelsChange(decoded);
+                setHasRead(true);
+                onOriginalChannelsChange?.(decoded);
+                toast({ title: "Import Successful", description: `Decoded ${decoded.length} channels.` });
             }
-        };
-        reader.readAsText(file);
+        } catch (e) {
+            console.error(e);
+            toast({ title: "Import Failed", description: String(e), variant: "destructive" });
+        }
+    }, [activeProfile, toast]);
+
+    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        processImportFile(file);
+        e.target.value = ""; // Reset
     }
+
+    // Effect to handle pending file from App.tsx (QSH Proceed)
+    useEffect(() => {
+        if (pendingFile && activeProfile) {
+            processImportFile(pendingFile);
+            if (onPendingFileConsumed) onPendingFileConsumed();
+        }
+    }, [pendingFile, activeProfile, processImportFile, onPendingFileConsumed]);
 
     const pageSize = 50
     const filteredChannels = searchQuery.toLowerCase()
@@ -183,10 +418,11 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
                         </Button>
                         <Button
                             onClick={handleWrite}
-                            disabled={!!loading || !connected}
+                            disabled={!!loading || !connected || !hasRead}
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2.5 text-[11px] font-medium text-primary hover:text-primary hover:bg-primary/10"
+                            title={!hasRead ? "Read or Import first" : ""}
                         >
                             {loading === "write" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
                             Write
@@ -285,15 +521,51 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
                     <Separator orientation="vertical" className="h-6 mx-1" />
 
                     <div className="flex items-center gap-1 pr-1">
-                        <Button variant="ghost" size="icon" onClick={handleExport} disabled={channels.length === 0} className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                            <FileUp className="h-3.5 w-3.5" />
-                        </Button>
-                        <div className="relative">
-                            <input type="file" accept=".csv" onChange={handleImport} className="absolute inset-0 opacity-0 cursor-pointer" />
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                                <FileDown className="h-3.5 w-3.5" />
-                            </Button>
-                        </div>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" disabled={channels.length === 0} className="h-7 w-7 text-muted-foreground hover:text-foreground">
+                                    <FileUp className="h-3.5 w-3.5" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground/70">Export Format</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={handleExportCSV} className="text-xs cursor-pointer">
+                                    <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />
+                                    Export as CSV (.csv)
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={handleExportQSH} className="text-xs cursor-pointer">
+                                    <FileCode className="mr-2 h-3.5 w-3.5" />
+                                    Export as QSH (.qsh)
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
+                                    <FileDown className="h-3.5 w-3.5" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground/70">Import Format</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-xs cursor-pointer focus:bg-primary/5 p-0">
+                                    <label className="flex items-center w-full px-2 py-1.5 cursor-pointer">
+                                        <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />
+                                        Import from CSV/JSON
+                                        <input type="file" accept=".csv,.json" onChange={handleImport} className="hidden" />
+                                    </label>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem className="text-xs cursor-pointer focus:bg-primary/5 p-0">
+                                    <label className="flex items-center w-full px-2 py-1.5 cursor-pointer">
+                                        <FileCode className="mr-2 h-3.5 w-3.5" />
+                                        Import from QSH
+                                        <input type="file" accept=".qsh" onChange={handleImport} className="hidden" />
+                                    </label>
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </div>
             </div>
@@ -307,6 +579,7 @@ export function MemoryView({ connected, activeProfile, onBusyChange }: MemoryVie
                         readOnly={!!loading}
                         page={page}
                         visibleColumns={visibleColumns}
+                        originalData={originalChannels}
                     />
                 </div>
             </main>

@@ -23,6 +23,7 @@ import {
 
 interface DataTableProps {
     data: Channel[]
+    originalData?: Channel[]
     activeProfile: RadioProfile | null
     onUpdate?: (index: number, field: keyof Channel, value: any) => void
     readOnly?: boolean
@@ -30,7 +31,7 @@ interface DataTableProps {
     visibleColumns: Record<string, boolean>
 }
 
-export function MemoryTable({ data, activeProfile, onUpdate, readOnly, page, visibleColumns }: DataTableProps) {
+export function MemoryTable({ data, originalData, activeProfile, onUpdate, readOnly, page, visibleColumns }: DataTableProps) {
 
     const [columnWidths, setColumnWidths] = React.useState<Record<string, number>>({
         index: 45, name: 160, rxFreq: 110, offset: 100, mode: 80, power: 80,
@@ -64,6 +65,7 @@ export function MemoryTable({ data, activeProfile, onUpdate, readOnly, page, vis
 
     const pageSize = 50
     const paginatedData = React.useMemo(() => data.slice(page * pageSize, (page + 1) * pageSize), [data, page, pageSize])
+    const paginatedOriginals = React.useMemo(() => originalData?.slice(page * pageSize, (page + 1) * pageSize), [originalData, page, pageSize])
 
     const handleEdit = React.useCallback((index: number, field: keyof Channel, value: any) => {
         let finalValue = value;
@@ -230,10 +232,11 @@ export function MemoryTable({ data, activeProfile, onUpdate, readOnly, page, vis
                     </TableHeader>
                     <TableBody>
                         {paginatedData.length ? (
-                            paginatedData.map((row) => (
+                            paginatedData.map((row, i) => (
                                 <MemoizedRow
                                     key={row.index}
                                     row={row}
+                                    originalRow={paginatedOriginals?.[i]}
                                     visibleColumns={visibleColumns}
                                     columnWidths={columnWidths}
                                     readOnly={readOnly}
@@ -268,6 +271,7 @@ export function MemoryTable({ data, activeProfile, onUpdate, readOnly, page, vis
 
 interface MemoizedRowProps {
     row: Channel
+    originalRow?: Channel
     visibleColumns: Record<string, boolean>
     columnWidths: Record<string, number>
     readOnly?: boolean
@@ -286,6 +290,7 @@ interface MemoizedRowProps {
 
 const MemoizedRow = React.memo(({
     row,
+    originalRow,
     visibleColumns,
     columnWidths,
     readOnly,
@@ -311,10 +316,15 @@ const MemoizedRow = React.memo(({
                     )}
                 >
                     <TableCell
-                        className="h-9 p-0 border-r border-b text-center text-[12px] font-medium bg-muted/10 text-foreground sticky left-0 z-10"
+                        className="h-9 p-0 border-r border-b text-center text-[12px] font-medium bg-muted/10 text-foreground sticky left-0 z-10 relative"
                         style={{ width: columnWidths.index }}
                     >
-                        {row.index}
+                        <div className="relative w-full h-full flex items-center justify-center">
+                            {row.index}
+                            {originalRow && JSON.stringify(row) !== JSON.stringify(originalRow) && (
+                                <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-blue-500" />
+                            )}
+                        </div>
                     </TableCell>
                     {visibleColumns.name && (
                         <TableCell className="h-9 p-0 border-r border-b" style={{ width: columnWidths.name }}>
@@ -330,10 +340,12 @@ const MemoizedRow = React.memo(({
                         <TableCell className="h-9 p-0 border-r border-b text-center" style={{ width: columnWidths.rxFreq }}>
                             <InputCell
                                 inputMode="decimal"
+                                variant="frequency"
+                                validate={(v) => /^\d{3}\.\d{5}$/.test(v)}
                                 value={row.rxFreq ? (row.rxFreq / 1000000).toFixed(5) : "0.00000"}
                                 onCommit={(v) => handleEdit(row.index, 'rxFreq', v)}
                                 editable={!readOnly}
-                                className="text-[14px]"
+                                className="text-[14px] font-mono"
                             />
                         </TableCell>
                     )}
@@ -341,10 +353,12 @@ const MemoizedRow = React.memo(({
                         <TableCell className="h-9 p-0 border-r border-b text-center" style={{ width: columnWidths.offset }}>
                             <InputCell
                                 inputMode="decimal"
+                                variant="frequency"
+                                validate={(v) => /^\d{3}\.\d{5}$/.test(v)}
                                 value={row.offset ? (row.offset / 1000000).toFixed(5) : "0.00000"}
                                 onCommit={(v) => handleEdit(row.index, 'offset', v)}
                                 editable={!readOnly}
-                                className="text-[14px]"
+                                className="text-[14px] font-mono"
                             />
                         </TableCell>
                     )}
@@ -523,12 +537,13 @@ const MemoizedRow = React.memo(({
                     Clear Row
                 </ContextMenuItem>
             </ContextMenuContent>
-        </ContextMenu>
+        </ContextMenu >
     );
 }, (prev, next) => {
     return prev.row === next.row &&
         prev.visibleColumns === next.visibleColumns &&
         prev.columnWidths === next.columnWidths &&
         prev.readOnly === next.readOnly &&
-        prev.clipboard === next.clipboard;
+        prev.clipboard === next.clipboard &&
+        prev.originalRow === next.originalRow;
 });

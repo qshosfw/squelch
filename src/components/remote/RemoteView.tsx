@@ -1,16 +1,191 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { ViewerPanel } from './ViewerPanel';
 import { useToast } from '@/hooks/use-toast';
 import { useProtocol } from '@/hooks/useProtocol';
 import { ModuleManager } from '@/lib/framework/module-manager';
 import { DisplayMirrorHandler } from '@/lib/framework/module-interface';
-import { Radio as RadioIcon } from 'lucide-react';
+import {
+    Radio as RadioIcon,
+    Activity,
+    Camera,
+    Circle,
+    ZoomIn,
+    ZoomOut,
+    RotateCcw,
+    Settings,
+    Palette,
+    Grid,
+    Ghost,
+    Moon,
+    Sun,
+    Square,
+    Download,
+    Lightbulb,
+    Play,
+    Pause,
+    Loader2
+} from 'lucide-react';
+import { Badge } from "@/components/ui/badge"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Separator } from '@/components/ui/separator';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
+import { cn } from '@/lib/utils';
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import {
     FRAME_SIZE,
     type ViewerSettings,
+    COLOR_SETS,
     loadSettings,
-    saveSettings
+    saveSettings,
+    createDefaultSettings
 } from '@/lib/lcd-constants';
+
+// Recording state
+interface RecordingState {
+    isRecording: boolean;
+    frames: string[];
+    startTime: number;
+}
+
+const saveBlob = async (blob: Blob, suggestedName: string, types: { description: string, accept: Record<string, string[]> }[]) => {
+    try {
+        if ('showSaveFilePicker' in window) {
+            const handle = await (window as any).showSaveFilePicker({
+                suggestedName,
+                types
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+        } else {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = suggestedName;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }
+    } catch (err: any) {
+        if (err.name !== 'AbortError') {
+            console.error('Save failed', err);
+        }
+    }
+};
+
+const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), 2);
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+};
+
+const RecordingPreview: React.FC<{
+    frames: string[];
+    onSave: (start: number, end: number) => void;
+    onDiscard: () => void;
+    isSaving: boolean;
+    progress: number | null;
+}> = ({ frames, onSave, onDiscard, isSaving, progress }) => {
+    const [range, setRange] = useState([0, Math.max(0, frames.length - 1)]);
+    const [current, setCurrent] = useState(0);
+    const [playing, setPlaying] = useState(true);
+    const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        setRange([0, Math.max(0, frames.length - 1)]);
+    }, [frames.length]);
+
+    useEffect(() => {
+        if (!playing) return;
+        const timer = setInterval(() => {
+            setCurrent(c => {
+                const next = c + 1;
+                if (next > range[1]) return range[0];
+                return next;
+            });
+        }, 100);
+        return () => clearInterval(timer);
+    }, [playing, range]);
+
+    useEffect(() => {
+        if (current < range[0]) setCurrent(range[0]);
+        if (current > range[1]) setCurrent(range[1]);
+    }, [range]);
+
+    const estimatedSize = dimensions.width > 0
+        ? formatBytes((range[1] - range[0] + 1) * dimensions.width * dimensions.height / 2)
+        : '~';
+
+    return (
+        <div className="flex flex-col gap-4">
+            <div className="relative aspect-[2/1] bg-black/5 rounded-lg overflow-hidden border flex items-center justify-center">
+                {frames.length > 0 && (
+                    <img
+                        src={frames[current] || frames[0]}
+                        className="h-full object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                        onLoad={(e) => {
+                            if (dimensions.width === 0) {
+                                setDimensions({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
+                            }
+                        }}
+                    />
+                )}
+                <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded font-mono backdrop-blur-sm">
+                    Frame {current + 1} / {frames.length}
+                </div>
+            </div>
+
+            <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <Button size="icon" variant="ghost" onClick={() => setPlaying(!playing)}>
+                        {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    </Button>
+                    <Slider
+                        value={range}
+                        min={0}
+                        max={Math.max(0, frames.length - 1)}
+                        step={1}
+                        minStepsBetweenThumbs={1}
+                        onValueChange={setRange}
+                        className="flex-1"
+                    />
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground font-mono">
+                    <span>Start: {range[0]}</span>
+                    <span>End: {range[1]}</span>
+                    <span>Est. Size: {estimatedSize}</span>
+                </div>
+            </div>
+
+            {isSaving && progress !== null && (
+                <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>{progress >= 100 ? "Finalizing..." : "Encoding GIF..."}</span>
+                        <span>{Math.round(progress)}%</span>
+                    </div>
+                    <Progress value={progress} className="h-2" />
+                </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:justify-between">
+                <Button variant="ghost" onClick={onDiscard} disabled={isSaving}>Discard</Button>
+                <Button onClick={() => onSave(range[0], range[1])} disabled={isSaving}>
+                    {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                    {progress && progress >= 100 ? "Finalizing..." : "Save GIF"}
+                </Button>
+            </DialogFooter>
+        </div>
+    );
+};
 
 export const RemoteView: React.FC = () => {
     const { protocol, isConnected } = useProtocol();
@@ -20,60 +195,61 @@ export const RemoteView: React.FC = () => {
     const [status, setStatus] = useState({ isConnected: false, fps: 0, bps: 0, totalFrames: 0 });
     const [settings, setSettings] = useState<ViewerSettings>(loadSettings);
 
+    const startTimeRef = useRef<number>(0);
+    const [duration, setDuration] = useState('00:00');
+    const [recording, setRecording] = useState<RecordingState>({ isRecording: false, frames: [], startTime: 0 });
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+    const [recordingDuration, setRecordingDuration] = useState('00:00');
+    const recordingIntervalRef = useRef<number | null>(null);
+    const [showSettings, setShowSettings] = useState(false);
+    const [encodingProgress, setEncodingProgress] = useState<number | null>(null);
+
     const activeProfile = ModuleManager.getActiveProfile();
     const handlerRef = useRef<DisplayMirrorHandler | null>(null);
     const isPausedByUs = useRef(false);
     const hasNotified = useRef(false);
 
-    // Persist settings when changed
-    useEffect(() => {
-        saveSettings(settings);
-    }, [settings]);
-
-    useEffect(() => {
+    const restoreScreencast = async () => {
         if (!activeProfile?.features.screencast) return;
+        if (isConnected && protocol && !isPausedByUs.current) {
+            try {
+                const handler = await activeProfile.startDisplayMirror(protocol);
+                if (handler) {
+                    handlerRef.current = handler;
+                    isPausedByUs.current = true;
+                    setStatus(s => ({ ...s, isConnected: true }));
 
-        const startScreencast = async () => {
-            if (isConnected && protocol && !isPausedByUs.current) {
-                try {
-                    const handler = await activeProfile.startDisplayMirror(protocol);
-                    if (handler) {
-                        handlerRef.current = handler;
-                        isPausedByUs.current = true;
-                        setStatus(s => ({ ...s, isConnected: true }));
+                    if (!hasNotified.current) {
+                        toast({ title: "Remote Connected", description: "Display mirroring session started." });
+                        hasNotified.current = true;
+                    }
 
-                        if (!hasNotified.current) {
+                    handler.onFrameUpdate = (fb) => {
+                        setFramebuffer(new Uint8Array(fb));
+                        setFrameVersion(v => v + 1);
+                    };
+
+                    handler.onStatusChange = (conn, _err) => {
+                        setStatus(s => ({ ...s, isConnected: conn }));
+                        if (conn && !hasNotified.current) {
                             toast({ title: "Remote Connected", description: "Display mirroring session started." });
                             hasNotified.current = true;
+                        } else if (!conn) {
+                            hasNotified.current = false;
                         }
+                    };
 
-                        handler.onFrameUpdate = (fb) => {
-                            setFramebuffer(new Uint8Array(fb));
-                            setFrameVersion(v => v + 1);
-                        };
-
-                        handler.onStatusChange = (conn, _err) => {
-                            setStatus(s => ({ ...s, isConnected: conn }));
-                            if (conn && !hasNotified.current) {
-                                toast({ title: "Remote Connected", description: "Display mirroring session started." });
-                                hasNotified.current = true;
-                            } else if (!conn) {
-                                hasNotified.current = false;
-                            }
-                        };
-
-                        handler.onStatsUpdate = (stats) => {
-                            setStatus(s => ({ ...s, ...stats }));
-                        };
-                    }
-                } catch (e: any) {
-                    toast({ variant: "destructive", title: "Failed to start remote", description: e.message });
+                    handler.onStatsUpdate = (stats) => {
+                        setStatus(s => ({ ...s, ...stats }));
+                    };
                 }
+            } catch (e: any) {
+                toast({ variant: "destructive", title: "Failed to start remote", description: e.message });
             }
-        };
+        }
+    };
 
-        startScreencast();
-
+    useEffect(() => {
         return () => {
             const restore = async () => {
                 if (isPausedByUs.current) {
@@ -87,33 +263,530 @@ export const RemoteView: React.FC = () => {
             };
             restore();
         };
+    }, []);
+
+    // Persist settings when changed
+    useEffect(() => {
+        saveSettings(settings);
+    }, [settings]);
+
+    useEffect(() => {
+        restoreScreencast();
     }, [isConnected, protocol, activeProfile, toast]);
+
+    // Connection duration timer
+    useEffect(() => {
+        if (status.isConnected && startTimeRef.current === 0) {
+            startTimeRef.current = Date.now();
+        } else if (!status.isConnected) {
+            startTimeRef.current = 0;
+            setDuration('00:00');
+        }
+    }, [status.isConnected]);
+
+    useEffect(() => {
+        if (!status.isConnected) return;
+        const timer = setInterval(() => {
+            const diff = Math.floor((Date.now() - startTimeRef.current) / 1000);
+            const m = Math.floor(diff / 60).toString().padStart(2, '0');
+            const s = (diff % 60).toString().padStart(2, '0');
+            setDuration(`${m}:${s}`);
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [status.isConnected]);
+
+    // Recording frame capture
+    useEffect(() => {
+        if (recording.isRecording) {
+            recordingIntervalRef.current = window.setInterval(() => {
+                const canvas = document.querySelector('canvas');
+                if (canvas) {
+                    setRecording(r => ({
+                        ...r,
+                        frames: [...r.frames, canvas.toDataURL('image/png')]
+                    }));
+                }
+            }, 100); // 10 FPS capture
+        } else if (recordingIntervalRef.current) {
+            clearInterval(recordingIntervalRef.current);
+            recordingIntervalRef.current = null;
+        }
+        return () => {
+            if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+        };
+    }, [recording.isRecording]);
+
+    // Update recording duration
+    useEffect(() => {
+        if (!recording.isRecording) return;
+        const timer = setInterval(() => {
+            const diff = Math.floor((Date.now() - recording.startTime) / 1000);
+            const m = Math.floor(diff / 60).toString().padStart(2, '0');
+            const s = (diff % 60).toString().padStart(2, '0');
+            setRecordingDuration(`${m}:${s}`);
+        }, 100);
+        return () => clearInterval(timer);
+    }, [recording.isRecording, recording.startTime]);
+
+    const handleScreenshot = useCallback(() => {
+        const canvas = document.querySelector('canvas');
+        if (canvas) {
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+            const filename = `capture-${timestamp}.png`;
+
+            canvas.toBlob(async (blob) => {
+                if (blob) {
+                    await saveBlob(blob, filename, [{
+                        description: 'PNG Image',
+                        accept: { 'image/png': ['.png'] }
+                    }]);
+                }
+            }, 'image/png');
+        }
+    }, []);
+
+    const toggleRecording = useCallback(() => {
+        if (recording.isRecording) {
+            // Stop recording - show save dialog
+            setRecording(r => ({ ...r, isRecording: false }));
+            if (recording.frames.length > 0) {
+                setShowSaveDialog(true);
+            }
+        } else {
+            // Start recording
+            setRecording({ isRecording: true, frames: [], startTime: Date.now() });
+            setRecordingDuration('00:00');
+        }
+    }, [recording.isRecording, recording.frames.length]);
+
+    const saveRecording = useCallback(async (startFrame: number, endFrame: number) => {
+        if (recording.frames.length === 0) {
+            setShowSaveDialog(false);
+            return;
+        }
+
+        setEncodingProgress(0);
+        await new Promise(r => setTimeout(r, 50));
+
+        try {
+            const encoder = new GIFEncoder();
+
+            const firstImg = await new Promise<HTMLImageElement>((resolve) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.src = recording.frames[0];
+            });
+
+            const { width, height } = firstImg;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            if (!ctx) return;
+
+            const framesToSave = recording.frames.slice(startFrame, endFrame + 1);
+
+            for (let i = 0; i < framesToSave.length; i++) {
+                const frameUrl = framesToSave[i];
+                const img = await new Promise<HTMLImageElement>((resolve) => {
+                    const im = new Image();
+                    im.onload = () => resolve(im);
+                    im.src = frameUrl;
+                });
+
+                ctx.drawImage(img, 0, 0);
+                const { data } = ctx.getImageData(0, 0, width, height);
+
+                const palette = quantize(data, 256);
+                const index = applyPalette(data, palette);
+
+                encoder.writeFrame(index, width, height, { palette, delay: 100 });
+
+                if (i % 2 === 0 || i === framesToSave.length - 1) {
+                    setEncodingProgress(Math.round(((i + 1) / framesToSave.length) * 100));
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            encoder.finish();
+
+            const blob = new Blob([encoder.bytes()], { type: 'image/gif' });
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+            const filename = `recording-${timestamp}.gif`;
+
+            await saveBlob(blob, filename, [{
+                description: 'GIF Image',
+                accept: { 'image/gif': ['.gif'] }
+            }]);
+        } catch (error) {
+            console.error("GIF Encoding failed", error);
+        } finally {
+            setEncodingProgress(null);
+            setRecording({ isRecording: false, frames: [], startTime: 0 });
+            setShowSaveDialog(false);
+        }
+    }, [recording.frames]);
+
+    const discardRecording = useCallback(() => {
+        setRecording({ isRecording: false, frames: [], startTime: 0 });
+        setShowSaveDialog(false);
+    }, []);
+
+    const updateSetting = useCallback(<K extends keyof ViewerSettings>(key: K, value: ViewerSettings[K]) => {
+        setSettings(prev => ({ ...prev, [key]: value }));
+    }, [setSettings]);
+
+    const resetSettings = useCallback(() => {
+        setSettings(createDefaultSettings());
+    }, [setSettings]);
 
     if (!activeProfile?.features.screencast) {
         return (
-            <div className="flex flex-col items-center justify-center h-[500px] text-center space-y-4">
-                <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-                    <RadioIcon className="w-8 h-8 text-muted-foreground" />
-                </div>
-                <div className="max-w-md space-y-2">
-                    <h2 className="text-xl font-semibold">Not Supported</h2>
-                    <p className="text-muted-foreground">
-                        The current radio profile ({activeProfile?.name || 'Generic'}) does not support remote display mirroring.
-                    </p>
+            <div className="flex flex-col h-full bg-transparent">
+                <div className="flex flex-col items-center justify-center flex-1 text-center space-y-4 bg-muted/5">
+                    <div className="w-16 h-16 bg-muted/20 rounded-full flex items-center justify-center border border-muted-foreground/20">
+                        <RadioIcon className="w-8 h-8 text-muted-foreground" />
+                    </div>
+                    <div className="max-w-md space-y-2">
+                        <h2 className="text-xl font-semibold">Not Supported</h2>
+                        <p className="text-muted-foreground text-sm">
+                            The current radio profile ({activeProfile?.name || 'Generic'}) does not support remote display mirroring.
+                        </p>
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="container mx-auto p-4">
-            <ViewerPanel
-                framebuffer={framebuffer}
-                frameVersion={frameVersion}
-                settings={settings}
-                setSettings={setSettings}
-                status={status}
-            />
-        </div>
+        <TooltipProvider>
+            <div className="flex flex-col h-full bg-transparent">
+                {/* Toolbar */}
+                <div className="flex items-center justify-between px-3 py-2 border-b bg-background shrink-0 h-11">
+                    {/* Left: Status */}
+                    <div className="flex items-center gap-2">
+                        <Badge variant={status.isConnected ? "default" : "secondary"} className="gap-1.5 h-7">
+                            <span className={cn(
+                                "w-1.5 h-1.5 rounded-full",
+                                status.isConnected ? "bg-green-400 animate-pulse" : "bg-muted-foreground"
+                            )} />
+                            {status.isConnected ? "Live" : "Disconnected"}
+                        </Badge>
+                        {status.isConnected && (
+                            <div className="flex items-center gap-1 bg-muted/20 px-2 py-0.5 rounded text-xs font-mono text-muted-foreground h-7">
+                                <Activity className="h-3.5 w-3.5 text-primary" />
+                                {status.fps} FPS
+                            </div>
+                        )}
+                        {status.isConnected && (
+                            <Badge variant="outline" className="font-mono text-xs h-7">
+                                {duration}
+                            </Badge>
+                        )}
+                    </div>
+
+                    {/* Right: Actions */}
+                    <div className="flex items-center gap-1">
+                        {/* Zoom Controls */}
+                        <div className="flex items-center gap-1 mr-2 bg-muted/20 rounded-md p-0.5 border border-muted-foreground/10">
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        onClick={() => updateSetting('pixelSize', Math.max(2, settings.pixelSize - 0.5))}
+                                    >
+                                        <ZoomOut className="w-3.5 h-3.5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Zoom Out</TooltipContent>
+                            </Tooltip>
+                            <span className="text-[10px] font-mono w-8 text-center">{settings.pixelSize}x</span>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        onClick={() => updateSetting('pixelSize', Math.min(12, settings.pixelSize + 0.5))}
+                                    >
+                                        <ZoomIn className="w-3.5 h-3.5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Zoom In</TooltipContent>
+                            </Tooltip>
+                        </div>
+
+                        {/* Quick toggles */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.invertLcd ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('invertLcd', settings.invertLcd ? 0 : 1)}
+                                >
+                                    {settings.invertLcd ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Invert Colors (I)</TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.pixelLcd ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('pixelLcd', settings.pixelLcd ? 0 : 1)}
+                                >
+                                    <Grid className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>LCD Grid (P)</TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.lcdGhosting ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('lcdGhosting', settings.lcdGhosting ? 0 : 1)}
+                                >
+                                    <Ghost className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>LCD Ghosting</TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={settings.backlightShadow ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => updateSetting('backlightShadow', settings.backlightShadow ? 0 : 1)}
+                                >
+                                    <Lightbulb className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Backlight Glow</TooltipContent>
+                        </Tooltip>
+
+                        <Separator orientation="vertical" className="h-6 mx-1" />
+
+                        {/* Color picker */}
+                        <Popover>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                                            <Palette className="w-4 h-4" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>Color Theme</TooltipContent>
+                            </Tooltip>
+                            <PopoverContent className="w-48 p-2" align="end">
+                                <div className="space-y-2">
+                                    <Label className="text-xs text-muted-foreground">Display Color</Label>
+                                    <ToggleGroup
+                                        type="single"
+                                        value={settings.colorKey}
+                                        onValueChange={(val) => val && updateSetting('colorKey', val)}
+                                        className="grid grid-cols-4 gap-1"
+                                    >
+                                        {Object.entries(COLOR_SETS).map(([key, set]) => (
+                                            <Tooltip key={key}>
+                                                <TooltipTrigger asChild>
+                                                    <ToggleGroupItem
+                                                        value={key}
+                                                        className="h-8 w-8 p-0 rounded-md"
+                                                        style={{ backgroundColor: set.bg }}
+                                                    >
+                                                        <div
+                                                            className="w-3 h-3 rounded-sm"
+                                                            style={{ backgroundColor: set.fg }}
+                                                        />
+                                                    </ToggleGroupItem>
+                                                </TooltipTrigger>
+                                                <TooltipContent side="bottom">{set.name}</TooltipContent>
+                                            </Tooltip>
+                                        ))}
+                                    </ToggleGroup>
+                                    <div className="flex gap-1 pt-1">
+                                        <Input
+                                            type="color"
+                                            className="h-8 flex-1 p-1"
+                                            value={settings.customColors.bg}
+                                            onChange={(e) => {
+                                                updateSetting('customColors', { ...settings.customColors, bg: e.target.value });
+                                                updateSetting('colorKey', 'custom');
+                                            }}
+                                        />
+                                        <Input
+                                            type="color"
+                                            className="h-8 flex-1 p-1"
+                                            value={settings.customColors.fg}
+                                            onChange={(e) => {
+                                                updateSetting('customColors', { ...settings.customColors, fg: e.target.value });
+                                                updateSetting('colorKey', 'custom');
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+
+                        {/* Settings */}
+                        <Popover open={showSettings} onOpenChange={setShowSettings}>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                                            <Settings className="w-4 h-4" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>Settings</TooltipContent>
+                            </Tooltip>
+                            <PopoverContent className="w-56 p-3" align="end">
+                                <div className="space-y-4">
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <Label>Backlight</Label>
+                                            <span className="font-mono text-muted-foreground">{settings.backlightLevel}</span>
+                                        </div>
+                                        <Slider
+                                            min={0} max={10} step={1}
+                                            value={[settings.backlightLevel]}
+                                            onValueChange={([val]) => updateSetting('backlightLevel', val)}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <Label>Contrast</Label>
+                                            <span className="font-mono text-muted-foreground">{settings.contrast}</span>
+                                        </div>
+                                        <Slider
+                                            min={0} max={15} step={1}
+                                            value={[settings.contrast]}
+                                            onValueChange={([val]) => updateSetting('contrast', val)}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <Label>Aspect Ratio</Label>
+                                            <span className="font-mono text-muted-foreground">{settings.pixelAspectRatio.toFixed(2)}</span>
+                                        </div>
+                                        <Slider
+                                            min={0.5} max={2.0} step={0.05}
+                                            value={[settings.pixelAspectRatio]}
+                                            onValueChange={([val]) => updateSetting('pixelAspectRatio', val)}
+                                        />
+                                    </div>
+                                    <Separator />
+                                    <Button variant="ghost" size="sm" className="w-full text-xs" onClick={resetSettings}>
+                                        <RotateCcw className="w-3 h-3 mr-1.5" />
+                                        Reset Settings
+                                    </Button>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+
+                        <Separator orientation="vertical" className="h-6 mx-1" />
+
+                        {/* Capture */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleScreenshot}>
+                                    <Camera className="w-4 h-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Screenshot (Space)</TooltipContent>
+                        </Tooltip>
+
+                        {/* Record */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant={recording.isRecording ? "destructive" : "ghost"}
+                                    size="icon"
+                                    className={cn(
+                                        "h-8 w-8 transition-all duration-300",
+                                        recording.isRecording && "animate-pulse"
+                                    )}
+                                    onClick={toggleRecording}
+                                >
+                                    {recording.isRecording ? (
+                                        <Square className="w-3 h-3 fill-current" />
+                                    ) : (
+                                        <Circle className="w-4 h-4" />
+                                    )}
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                {recording.isRecording ? `Stop (${recordingDuration})` : 'Record'}
+                            </TooltipContent>
+                        </Tooltip>
+                    </div>
+                </div>
+
+                <ScrollArea className="flex-1 bg-muted/5">
+                    <div className="p-8 flex flex-col items-center justify-start min-h-full space-y-4">
+                        {/* Recording indicator */}
+                        {recording.isRecording && (
+                            <div className="flex items-center justify-center gap-2 py-1 px-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+                                <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                                <span className="text-xs font-medium text-destructive">
+                                    Recording {recordingDuration} • {recording.frames.length} frames
+                                </span>
+                            </div>
+                        )}
+
+                        <ViewerPanel
+                            framebuffer={framebuffer}
+                            frameVersion={frameVersion}
+                            settings={settings}
+                        />
+
+                        {/* Stats footer */}
+                        {status.isConnected && (
+                            <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
+                                <span className="flex items-center gap-1">
+                                    <Activity className="w-3 h-3" />
+                                    {status.totalFrames.toLocaleString()} frames
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </ScrollArea>
+
+                {/* Save Recording Dialog */}
+                <Dialog open={showSaveDialog} onOpenChange={(open) => {
+                    if (!open && !encodingProgress) setShowSaveDialog(false);
+                }}>
+                    <DialogContent className="sm:max-w-md">
+                        <DialogHeader>
+                            <DialogTitle>Save Recording</DialogTitle>
+                            <DialogDescription>
+                                Trim and save your capture.
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <RecordingPreview
+                            frames={recording.frames}
+                            onSave={saveRecording}
+                            onDiscard={discardRecording}
+                            isSaving={encodingProgress !== null}
+                            progress={encodingProgress}
+                        />
+                    </DialogContent>
+                </Dialog>
+            </div>
+        </TooltipProvider>
     );
 };

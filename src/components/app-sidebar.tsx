@@ -1,20 +1,20 @@
+import { usePreferences } from "@/contexts/PreferencesContext"
 import * as React from "react"
 import {
-    ChevronsLeft,
-    ChevronsRight,
-    Database,
-    LayoutDashboard,
-    Settings,
     Terminal,
-
     Radio,
-    FileCode,
-    ArrowUpCircle,
+    Zap,
+    TableProperties,
+    Wrench,
+    Sliders,
     Play,
     Square,
     ChevronDown,
     Copy,
-    Check
+    Check,
+    LayoutDashboard,
+    ChevronsRight,
+    ChevronsLeft
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
@@ -142,7 +142,13 @@ export function AppSidebar({
     activeProfile,
     onProfileSelect
 }: SidebarProps) {
+    const { bootloaderDetected } = usePreferences()
     const allProfiles = ModuleManager.getProfiles();
+
+    // Disable navigation if busy OR in DFU mode (except Flasher/Console for DFU logic if needed, but mostly DFU locks everything)
+    // Actually DFU locks specific things, isBusy locks EVERYTHING to prevent state corruption
+    const isLocked = isBusy || bootloaderDetected;
+
     const handleProfileChange = (id: string) => {
         const p = allProfiles.find(x => x.id === id);
         if (p) {
@@ -151,7 +157,7 @@ export function AppSidebar({
         }
     };
 
-    const NavItem = ({ icon: Icon, label, value, shortcut, badge }: { icon: any, label: string, value: string, shortcut?: string, badge?: string }) => {
+    const NavItem = ({ icon: Icon, label, value, shortcut, badge, disabled }: { icon: any, label: string, value: string, shortcut?: string, badge?: string, disabled?: boolean }) => {
         const isSelected = currentView === value
 
         if (isCollapsed) {
@@ -162,8 +168,9 @@ export function AppSidebar({
                             <Button
                                 variant={isSelected ? "secondary" : "ghost"}
                                 size="icon"
-                                className="h-9 w-9"
-                                onClick={() => setCurrentView(value)}
+                                className={cn("h-9 w-9", disabled && "opacity-50 pointer-events-none")}
+                                onClick={() => !disabled && setCurrentView(value)}
+                                disabled={disabled}
                             >
                                 <Icon className="h-4 w-4" />
                                 <span className="sr-only">{label}</span>
@@ -174,7 +181,7 @@ export function AppSidebar({
                         </div>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="flex items-center gap-4">
-                        {label}
+                        {label} {disabled && isCollapsed && "(Disabled)"}
                         {badge && <Badge variant="secondary" className="h-4 px-1 text-[8px] uppercase tracking-tighter bg-primary/10 text-primary border-none">{badge}</Badge>}
                         {shortcut && <span className="ml-auto text-xs tracking-widest text-muted-foreground">{shortcut}</span>}
                     </TooltipContent>
@@ -185,8 +192,9 @@ export function AppSidebar({
         return (
             <Button
                 variant={isSelected ? "secondary" : "ghost"}
-                className="w-full justify-start h-9 px-2"
-                onClick={() => setCurrentView(value)}
+                className={cn("w-full justify-start h-9 px-2", disabled && "opacity-50 pointer-events-none")}
+                onClick={() => !disabled && setCurrentView(value)}
+                disabled={disabled}
             >
                 <Icon className="mr-2 h-4 w-4" />
                 <span className="flex-1 text-left text-sm">{label}</span>
@@ -256,10 +264,10 @@ export function AppSidebar({
 
             <ScrollArea className="flex-1 py-4">
                 <nav className="grid gap-1 px-2 group-[[data-collapsed=true]]:justify-center group-[[data-collapsed=true]]:px-2">
-                    <NavItem icon={LayoutDashboard} label="Dashboard" value="overview" shortcut="⌘1" />
-                    <NavItem icon={Database} label="Memories" value="memories" shortcut="⌘2" badge="WIP" />
-                    <NavItem icon={ArrowUpCircle} label="Flasher" value="flasher" shortcut="⌘3" />
-                    <NavItem icon={Radio} label="Remote" value="remote" shortcut="⌘4" badge="WIP" />
+                    <NavItem icon={LayoutDashboard} label="Dashboard" value="overview" shortcut="⌘1" disabled={isBusy} />
+                    <NavItem icon={TableProperties} label="Memories" value="memories" shortcut="⌘2" badge="WIP" disabled={isLocked} />
+                    <NavItem icon={Zap} label="Flasher" value="flasher" shortcut="⌘3" disabled={isBusy} />
+                    <NavItem icon={Radio} label="Remote" value="remote" shortcut="⌘4" badge="WIP" disabled={isLocked} />
 
                     {/* Custom Pages from Active Profile */}
                     {activeProfile?.customPages?.map((page) => (
@@ -268,12 +276,13 @@ export function AppSidebar({
                             icon={page.icon || Square}
                             label={page.label}
                             value={page.id}
+                            disabled={isLocked}
                         />
                     ))}
 
-                    <NavItem icon={Settings} label="Configuration" value="config" shortcut="⌘5" />
-                    <NavItem icon={Terminal} label="Console" value="console" shortcut="⌘6" />
-                    <NavItem icon={FileCode} label="Calibration" value="calib" />
+                    <NavItem icon={Sliders} label="Configuration" value="config" shortcut="⌘5" disabled={isLocked} />
+                    <NavItem icon={Terminal} label="Console" value="console" shortcut="⌘6" disabled={isLocked} />
+                    <NavItem icon={Wrench} label="Calibration" value="calib" disabled={isLocked} />
                 </nav>
 
                 <Separator className="my-4" />

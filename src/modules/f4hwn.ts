@@ -1,4 +1,4 @@
-import { RadioProfile, Channel, DisplayMirrorHandler, FeatureFlags, TelemetryData, SettingsSchema } from '../lib/framework/module-interface';
+import { BaseRadioModule, Channel, DisplayMirrorHandler, FeatureFlags, TelemetryData, SettingsSchema, MemoryConfig } from '../lib/framework/module-interface';
 
 // --- Radio Constants ---
 const TONES = [
@@ -24,7 +24,7 @@ const MSG_RSSI_RESP = 0x0528;
 const MSG_BATT_REQ = 0x0529;
 const MSG_BATT_RESP = 0x052A;
 
-export class F4HWNProfile extends RadioProfile {
+export class F4HWNProfile extends BaseRadioModule {
     get id(): string { return "f4hwn"; }
     get name(): string { return "F4HWN / Egzumer"; }
     get description(): string { return "Support for F4HWN and Egzumer custom firmware with advanced screencast"; }
@@ -42,15 +42,28 @@ export class F4HWNProfile extends RadioProfile {
         };
     }
 
-    get memoryRanges() {
+    get memoryMapping(): MemoryConfig {
         return {
-            channels: { start: 0x0000, size: 200 * 16 },
-            attributes: { start: 0x0D60, size: 0x0E40 - 0x0D60 },
-            names: { start: 0x0F50, size: 200 * 16 },
-            settings_main: { start: 0x0E70, size: 0xB0 },
-            f40: { start: 0x0F40, size: 16 },
-            settings_ext: { start: 0x1FF0, size: 16 }
+            channels: { start: 0x0000, size: 200 * 16, stride: 16 },
+            settings: { start: 0x0E70, size: 0xB0 },
+            extra: {
+                attributes: { start: 0x0D60, size: 0x0E40 - 0x0D60 },
+                names: { start: 0x0F50, size: 200 * 16 },
+                settings_main: { start: 0x0E70, size: 0xB0 },
+                f40: { start: 0x0F40, size: 16 },
+                settings_ext: { start: 0x1FF0, size: 16 }
+            }
         };
+    }
+
+    get strings() {
+        return {
+            "calibration.warning": "F4HWN calibration is blocked by default in this profile.",
+        };
+    }
+
+    get components() {
+        return {};
     }
 
     get lists() {
@@ -295,11 +308,12 @@ export class F4HWNProfile extends RadioProfile {
         const info = await protocol.identify();
         const timestamp = info.timestamp || 0;
 
-        const mr = this.memoryRanges;
-        const range = mr.channels;
+        const mm = this.memoryMapping;
+        const range = mm.channels;
         const stride = this.channelStride;
         const count = this.channelCount;
         const BATCH_SIZE = 10;
+        const EXTRA = mm.extra || {};
 
         const allChannels: Channel[] = [];
         let processed = 0;
@@ -314,15 +328,15 @@ export class F4HWNProfile extends RadioProfile {
 
             // 2. Read Attributes (if exists)
             let attrBytes: Uint8Array | null = null;
-            if (mr.attributes) {
-                const atStart = mr.attributes.start + i;
+            if (EXTRA.attributes) {
+                const atStart = EXTRA.attributes.start + i;
                 attrBytes = await protocol.readEEPROM(atStart, batchCount, timestamp);
             }
 
             // 3. Read Names (if exists)
             let nameBytes: Uint8Array | null = null;
-            if (mr.names) {
-                const nmStart = mr.names.start + (i * 16);
+            if (EXTRA.names) {
+                const nmStart = EXTRA.names.start + (i * 16);
                 nameBytes = await protocol.readEEPROM(nmStart, batchCount * 16, timestamp);
             }
 
@@ -353,10 +367,11 @@ export class F4HWNProfile extends RadioProfile {
         const info = await protocol.identify();
         const timestamp = info.timestamp || 0;
 
-        const mr = this.memoryRanges;
+        const mm = this.memoryMapping;
         const stride = this.channelStride;
         const count = channels.length;
         const BATCH_SIZE = 10;
+        const EXTRA = mm.extra || {};
         let processed = 0;
 
         for (let i = 0; i < count; i += BATCH_SIZE) {
@@ -365,9 +380,9 @@ export class F4HWNProfile extends RadioProfile {
             // Prepare Buffers
             const chBytes = new Uint8Array(batchCount * stride);
             chBytes.fill(0xFF);
-            const attrBytes = mr.attributes ? new Uint8Array(batchCount) : null;
+            const attrBytes = EXTRA.attributes ? new Uint8Array(batchCount) : null;
             if (attrBytes) attrBytes.fill(0xFF);
-            const nameBytes = mr.names ? new Uint8Array(batchCount * 16) : null;
+            const nameBytes = EXTRA.names ? new Uint8Array(batchCount * 16) : null;
             if (nameBytes) nameBytes.fill(0xFF);
 
             // Encode
@@ -384,18 +399,18 @@ export class F4HWNProfile extends RadioProfile {
             }
 
             // Write Ch
-            const chStart = mr.channels.start + (i * stride);
+            const chStart = mm.channels.start + (i * stride);
             await protocol.writeEEPROM(chStart, chBytes, timestamp);
 
             // Write Attr
-            if (attrBytes && mr.attributes) {
-                const atStart = mr.attributes.start + i;
+            if (attrBytes && EXTRA.attributes) {
+                const atStart = EXTRA.attributes.start + i;
                 await protocol.writeEEPROM(atStart, attrBytes, timestamp);
             }
 
             // Write Name
-            if (nameBytes && mr.names) {
-                const nmStart = mr.names.start + (i * 16);
+            if (nameBytes && EXTRA.names) {
+                const nmStart = EXTRA.names.start + (i * 16);
                 await protocol.writeEEPROM(nmStart, nameBytes, timestamp);
             }
 
@@ -450,7 +465,9 @@ export class F4HWNProfile extends RadioProfile {
         const s: any = {};
 
         // Block 1: E70
-        const main = buffers.settings_main || new Uint8Array(0xB0);
+        // SettingsView passes 'settings', but we mapped 'settings_main' in extra.
+        // We should use 'settings' if available (from generic import) or 'settings_main' (from specific read).
+        const main = buffers.settings_main || buffers.settings || new Uint8Array(0xB0);
         const e70 = main.subarray(0x00, 0x10);
 
         s.squelch = e70[1];
@@ -519,7 +536,7 @@ export class F4HWNProfile extends RadioProfile {
     }
 
     encodeSettings(s: any, buffers: { [key: string]: Uint8Array }): void {
-        const main = buffers.settings_main || new Uint8Array(0xB0);
+        const main = buffers.settings_main || buffers.settings || new Uint8Array(0xB0);
         const e70 = main.subarray(0x00, 0x10);
 
         if (s.squelch !== undefined) e70[1] = s.squelch;

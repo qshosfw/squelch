@@ -1,6 +1,7 @@
-import { RadioProfile, Channel, FeatureFlags } from '../lib/framework/module-interface';
+import { BaseRadioModule, Channel, FeatureFlags, MemoryConfig } from '../lib/framework/module-interface';
 
-export class StockProfile extends RadioProfile {
+
+export class StockProfile extends BaseRadioModule {
     get id() { return "stock-uvk5v3"; }
     get name() { return "Quansheng UV-K5 (Stock)"; }
 
@@ -19,15 +20,29 @@ export class StockProfile extends RadioProfile {
         };
     }
 
-    get memoryRanges() {
+    get strings() {
         return {
-            channels: { start: 0x0000, size: 200 * 16 },
+            "calibration.warning": "Stock firmware calibration is limited. Proceed with caution.",
+        };
+    }
+
+    get components() {
+        return {};
+    }
+
+    get memoryMapping(): MemoryConfig {
+        return {
+            channels: { start: 0x0000, size: 200 * 16, stride: 16 },
             // Stock usually stores names/attributes elsewhere?
             // On stock K5:
             // 0x0000 - 0x0C80: Channels (200 * 16)
             // 0x0C80 - 0x0D60: VFOs
             // 0x0D60 - 0x0E40: Channel Attributes (200 * 1)? Or bitpacked?
             // 0x0F50 - 0x1B50: Channel Names? (200 * 16)
+            extra: {
+                attributes: { start: 0x0D60, size: 200 * 1 }, // Guess
+                names: { start: 0x0F50, size: 200 * 16 }
+            }
         };
     }
 

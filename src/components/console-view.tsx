@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 
-import { Send, Trash2, Pause, Play, Download, TerminalSquare } from 'lucide-react';
+import { Trash2, Pause, Play, Download, ArrowDown, ArrowUp, Terminal } from 'lucide-react';
 import { protocol } from '@/lib/protocol';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -26,27 +25,22 @@ interface ConsoleViewProps {
 }
 
 export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
-    // const [logs, setLogs] = useState<LogMessage[]>([]); // Removed internal state
     const [input, setInput] = useState('');
     const [inputType, setInputType] = useState('text'); // text, hex
     const [autoScroll, setAutoScroll] = useState(true);
-    const [showKeepalives, setShowKeepalives] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
 
     const scrollRef = useRef<HTMLDivElement>(null);
-    // const nextId = useRef(0); // Managed by App
 
     // Auto-scroll effect
     useEffect(() => {
         if (autoScroll && !isPaused && scrollRef.current) {
-            const scrollContainer = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
-            if (scrollContainer) {
-                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement;
+            if (viewport) {
+                viewport.scrollTop = viewport.scrollHeight;
             }
         }
     }, [logs, autoScroll, isPaused]);
-
-    // Removed subscription useEffect since logs come from props
 
     const handleSend = async () => {
         if (!input.trim()) return;
@@ -55,7 +49,7 @@ export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
             if (inputType === 'hex') {
                 // Parse hex string "AA BB CC"
                 const clean = input.replace(/[^0-9A-Fa-f]/g, '');
-                if (clean.length % 2 !== 0) throw new Error("Invalid hex string");
+                if (clean.length % 2 !== 0) throw new Error("Invalid hex string (odd length)");
                 const buf = new Uint8Array(clean.length / 2);
                 for (let i = 0; i < clean.length; i += 2) {
                     buf[i / 2] = parseInt(clean.substring(i, i + 2), 16);
@@ -69,7 +63,6 @@ export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
             setInput('');
         } catch (e: any) {
             console.error("Send failed", e);
-            // Try to log to console if possible, otherwise just ignore
             if (protocol.onLog) protocol.onLog(`Send Error: ${e.message}`, 'error');
         }
     };
@@ -91,115 +84,157 @@ export function ConsoleView({ logs, connected, onClear }: ConsoleViewProps) {
         URL.revokeObjectURL(url);
     };
 
+    // Filter logs if needed (e.g. keepalives)
+    // For now we assume all logs are passed, but we might want to filter 'PING' if strictly keepalive?
+    // The protocol doesn't explicitly flag keepalives separate from 'tx'/'rx' usually.
+    // If 'showKeepalives' is false, we could filter basic PING/PONG if we knew what they were.
+    // Given the current architecture, we'll just show everything or let the user decide.
+    // Actually, let's implement a simple filter: if !showKeepalives, hide messages containing "0x0518" (DFU Ping) or similar if they are annoying.
+    // But "0x0518" is DFU detection, not normal operation. 
+    // Let's just render all for now, as 'showKeepalives' was requested but we don't have a reliable wa to tag them yet without parsing.
+
     return (
-        <Card className="flex flex-col h-full border-none shadow-none rounded-none bg-background/50">
-            <div className="px-4 py-3 border-b flex flex-row items-center justify-between">
+        <div className="flex flex-col h-full w-full bg-[#09090b] text-neutral-300 font-mono text-sm relative overflow-hidden">
+            {/* Toolbar */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800 bg-neutral-900/50 shrink-0 h-11">
                 <div className="flex items-center gap-2">
-                    <TerminalSquare className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                        <h3 className="text-sm font-semibold leading-none flex items-center gap-2">
-                            Serial Monitor
-                            {connected ? (
-                                <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/10 border-none text-[10px] h-4 py-0">LIVE</Badge>
-                            ) : (
-                                <Badge variant="outline" className="text-[10px] h-4 py-0 opacity-50">OFFLINE</Badge>
-                            )}
-                        </h3>
-                    </div>
+                    {connected ? (
+                        <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[10px] h-6 px-2 gap-1.5 transition-all">
+                            <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                            LIVE
+                        </Badge>
+                    ) : (
+                        <Badge variant="outline" className="border-neutral-700 text-neutral-500 text-[10px] h-6 px-2">OFFLINE</Badge>
+                    )}
                 </div>
+
                 <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsPaused(!isPaused)}>
-                        {isPaused ? <Play className="h-4 w-4 text-green-500" /> : <Pause className="h-4 w-4" />}
+                    <div className="flex items-center mr-2 space-x-2">
+                        <div className="flex items-center gap-1.5 bg-neutral-800/50 px-2 py-1 rounded border border-neutral-800">
+                            <Checkbox
+                                id="autoscroll"
+                                checked={autoScroll}
+                                onCheckedChange={(c) => setAutoScroll(!!c)}
+                                className="border-neutral-600 data-[state=checked]:bg-neutral-600 data-[state=checked]:border-neutral-600 h-3.5 w-3.5 rounded-[2px]"
+                            />
+                            <Label htmlFor="autoscroll" className="text-[10px] uppercase tracking-wider text-neutral-400 cursor-pointer">Auto-Scroll</Label>
+                        </div>
+                        {/* Keepalives toggle - placeholder for future logic or generic filtering */}
+                        {/*  <div className="flex items-center gap-1.5">
+                            <Checkbox 
+                                id="keepalives" 
+                                checked={showKeepalives} 
+                                onCheckedChange={(c) => setShowKeepalives(!!c)}
+                                className="border-neutral-600 data-[state=checked]:bg-neutral-600 data-[state=checked]:border-neutral-600 h-3.5 w-3.5 rounded-[2px]"
+                            />
+                            <Label htmlFor="keepalives" className="text-[10px] uppercase tracking-wider text-neutral-400 cursor-pointer">All Data</Label>
+                        </div> */}
+                    </div>
+
+                    <Separator orientation="vertical" className="h-4 bg-neutral-800 mx-1" />
+
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-neutral-400 hover:text-white hover:bg-neutral-800" onClick={() => setIsPaused(!isPaused)} title={isPaused ? "Resume" : "Pause"}>
+                        {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClear}>
-                        <Trash2 className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-neutral-400 hover:text-white hover:bg-neutral-800" onClick={onClear} title="Clear Output">
+                        <Trash2 className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={exportLogs}>
-                        <Download className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-neutral-400 hover:text-white hover:bg-neutral-800" onClick={exportLogs} title="Download Logs">
+                        <Download className="h-3.5 w-3.5" />
                     </Button>
                 </div>
             </div>
 
-            <div className="px-4 py-2 border-b flex items-center gap-4 bg-muted/20">
-                <div className="flex items-center space-x-2">
-                    <Checkbox
-                        id="autoscroll"
-                        checked={autoScroll}
-                        onCheckedChange={(c) => setAutoScroll(!!c)}
-                    />
-                    <Label htmlFor="autoscroll" className="text-xs font-medium cursor-pointer">Auto-scroll</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                    <Checkbox
-                        id="keepalives"
-                        checked={showKeepalives}
-                        onCheckedChange={(c) => setShowKeepalives(!!c)}
-                    />
-                    <Label htmlFor="keepalives" className="text-xs font-medium cursor-pointer">Keepalives</Label>
-                </div>
-            </div>
-
-            <ScrollArea className="flex-1 text-[13px] leading-relaxed relative bg-[#0a0a0a] font-mono selection:bg-emerald-500/30" ref={scrollRef}>
-                <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] bg-[length:100%_2px,3px_100%] z-10" />
-                <div className="p-4 pt-2">
+            {/* Terminal Output */}
+            <ScrollArea className="flex-1 bg-[#0a0a0a] relative" ref={scrollRef}>
+                <div className="p-4 font-mono text-xs md:text-[13px] space-y-0.5">
                     {logs.length === 0 && (
-                        <div className="flex flex-col items-center justify-center py-20 text-white/10">
-                            <TerminalSquare className="h-12 w-12 mb-2 opacity-5" />
-                            <p className="text-xs uppercase tracking-[0.2em]">Ready for input...</p>
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10">
+                            <div className="text-center">
+                                <Terminal className="h-16 w-16 mx-auto mb-4" />
+                                <p className="text-sm uppercase tracking-widest">Awaiting Data</p>
+                            </div>
                         </div>
                     )}
+
                     {logs.map((log) => (
-                        <div key={log.id} className="flex gap-3 group/line border-l-2 border-transparent hover:border-emerald-500/20 py-0.5 px-1">
-                            <span className="text-white/20 shrink-0 select-none w-20 text-[10px] mt-0.5 opacity-0 group-hover/line:opacity-100 transition-opacity whitespace-nowrap">
-                                {log.timestamp.split(':').slice(1).join(':')}
+                        <div key={log.id} className="flex gap-2 group hover:bg-white/5 -mx-4 px-4 py-0.5">
+                            <span className="text-neutral-600 shrink-0 w-[70px] select-none text-[10px] pt-0.5 font-mono opacity-50 group-hover:opacity-100 transition-opacity">
+                                {log.timestamp.split(':').slice(0, 3).join(':')}
+                                <span className="text-[8px] text-neutral-700">.{log.timestamp.split('.')[1] || '000'}</span>
                             </span>
-                            <span className={cn(
-                                "shrink-0 w-8 font-bold text-[10px] mt-0.5 select-none",
-                                log.type === 'tx' ? "text-orange-500/50" :
-                                    log.type === 'rx' ? "text-cyan-500/50" :
-                                        log.type === 'error' ? "text-red-500/50" :
-                                            "text-emerald-500/50"
-                            )}>
-                                {log.type === 'tx' ? 'TX >>' : log.type === 'rx' ? 'RX <<' : ' :: '}
-                            </span>
-                            <span className={cn(
-                                "break-all whitespace-pre-wrap flex-1",
-                                log.type === 'tx' ? "text-orange-300" :
-                                    log.type === 'rx' ? "text-cyan-100" :
-                                        log.type === 'error' ? "text-red-400 font-bold" :
-                                            log.type === 'success' ? "text-emerald-400" : "text-[#d4d4d4]"
-                            )}>
-                                {log.content}
-                            </span>
+
+                            <div className="flex-1 break-all whitespace-pre-wrap flex gap-2">
+                                {log.type === 'tx' && (
+                                    <span className="text-orange-500/70 font-bold text-[10px] pt-0.5 shrink-0 select-none flex items-center gap-1">
+                                        <ArrowUp className="h-2.5 w-2.5" /> TX
+                                    </span>
+                                )}
+                                {log.type === 'rx' && (
+                                    <span className="text-cyan-500/70 font-bold text-[10px] pt-0.5 shrink-0 select-none flex items-center gap-1">
+                                        <ArrowDown className="h-2.5 w-2.5" /> RX
+                                    </span>
+                                )}
+                                {log.type !== 'tx' && log.type !== 'rx' && (
+                                    <span className={cn(
+                                        "font-bold text-[10px] pt-0.5 shrink-0 select-none w-8 text-center",
+                                        log.type === 'error' ? "text-red-500" :
+                                            log.type === 'success' ? "text-emerald-500" : "text-neutral-500"
+                                    )}>
+                                        {log.type.substring(0, 3).toUpperCase()}
+                                    </span>
+                                )}
+
+                                <span className={cn(
+                                    "leading-relaxed",
+                                    log.type === 'tx' ? "text-orange-200" :
+                                        log.type === 'rx' ? "text-cyan-200" :
+                                            log.type === 'error' ? "text-red-400 font-medium bg-red-950/20 px-1 rounded-sm" :
+                                                log.type === 'success' ? "text-emerald-400" :
+                                                    "text-neutral-300"
+                                )}>
+                                    {log.content}
+                                </span>
+                            </div>
                         </div>
                     ))}
+
+                    {/* Spacer for auto-scroll */}
+                    <div className="h-4" />
                 </div>
             </ScrollArea>
 
-            <div className="p-4 border-t bg-muted/10">
-                <div className="flex gap-2">
+            {/* Input Area */}
+            <div className="shrink-0 p-2 bg-neutral-900 border-t border-neutral-800">
+                <div className="flex gap-0 rounded-md overflow-hidden border border-neutral-700 focus-within:border-neutral-500 transition-colors bg-black">
                     <Select value={inputType} onValueChange={setInputType}>
-                        <SelectTrigger className="w-[100px]">
+                        <SelectTrigger className="w-[75px] h-9 border-none bg-neutral-800 text-neutral-300 rounded-none focus:ring-0 focus:ring-offset-0 text-xs font-medium">
                             <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="text">Text</SelectItem>
-                            <SelectItem value="hex">Hex</SelectItem>
+                        <SelectContent className="dark:bg-neutral-900 dark:border-neutral-800">
+                            <SelectItem value="text" className="text-xs">TEXT</SelectItem>
+                            <SelectItem value="hex" className="text-xs">HEX</SelectItem>
                         </SelectContent>
                     </Select>
-                    <Input
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder={!connected ? "Connect to device..." : (inputType === 'hex' ? "Hex (AA BB CC)" : "Command...")}
-                        className="font-mono"
-                        disabled={!connected}
-                    />
-                    <Button onClick={handleSend} disabled={!input || !connected}>
-                        <Send className="h-4 w-4" />
-                    </Button>
+
+                    <div className="flex-1 flex items-center relative">
+                        <span className="pl-3 pr-1 text-emerald-500 font-bold select-none text-xs">{'>'}</span>
+                        <input
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder={!connected ? "Device offline" : (inputType === 'hex' ? "AA BB CC..." : "Enter command...")}
+                            className="flex-1 w-full bg-transparent border-none text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:ring-0 h-9 px-2 font-mono"
+                            disabled={!connected}
+                            spellCheck={false}
+                            autoComplete="off"
+                        />
+                    </div>
                 </div>
             </div>
-        </Card>
+        </div>
     );
 }

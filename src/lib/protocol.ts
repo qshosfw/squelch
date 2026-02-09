@@ -499,6 +499,9 @@ export class Protocol {
                 const blVersion = new TextDecoder().decode(resp.data.slice(16, blVersionEnd));
 
                 if (this.onDfuDetected) this.onDfuDetected(blVersion);
+
+                // Return early so we don't spam callbacks while waiting for a timeout
+                return { uid: "", firmwareVersion: `Bootloader ${blVersion}`, timestamp: ts };
             }
 
             if (resp.msgType === MSG_DEV_INFO_RESP) {
@@ -519,6 +522,7 @@ export class Protocol {
 
         throw new Error("Device identification timed out");
     }
+
 
     // ========================================================================
     // DFU / Bootloader Operations

@@ -39,7 +39,7 @@ export function TopMenuBar({
                     <MenubarTrigger className="font-medium text-[13px] py-0 h-7">File</MenubarTrigger> {/* Added text-xs, py-0, h-7 */}
                     <MenubarContent>
                         <MenubarItem onClick={onImportFirmware}>
-                            Import binary & flash <MenubarShortcut>⌘O</MenubarShortcut>
+                            Open file <MenubarShortcut>⌘O</MenubarShortcut>
                         </MenubarItem>
                         <MenubarSeparator />
                         <MenubarItem onClick={onBackupCalibration}>

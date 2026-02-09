@@ -1,8 +1,9 @@
+"use client"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -23,13 +24,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 
-
-
-
-
-
 const MarkdownComponents = {
-
     table: ({ children }: any) => (
         <div className="my-6 w-full overflow-x-auto rounded-lg border">
             <table className="w-full text-sm text-left border-collapse">
@@ -43,8 +38,6 @@ const MarkdownComponents = {
     th: ({ children }: any) => <th className="p-3 font-semibold">{children}</th>,
     td: ({ children }: any) => <td className="p-3 whitespace-nowrap">{children}</td>,
     a: ({ href, children, ...props }: any) => {
-        // We'll need access to selectedRepo for this, but MarkdownComponents is static
-        // We can pass it via a closure or helper
         return <a href={href} {...props} className="text-primary hover:underline">{children}</a>
     },
     p: ({ children, node, ...props }: any) => {
@@ -90,7 +83,6 @@ const MarkdownComponents = {
 };
 
 const blockquoteRenderer = (children: any) => {
-    // Collect all text from children to see if it starts with [!TYPE]
     const getText = (nodes: any): string => {
         if (!nodes) return "";
         if (typeof nodes === 'string') return nodes;
@@ -166,13 +158,19 @@ const blockquoteRenderer = (children: any) => {
     return <blockquote className="border-l-4 border-muted pl-4 italic my-4 opacity-80">{children}</blockquote>;
 };
 
-export function FlasherView({ connected, onConnect, onBusyChange }: {
+
+
+import { ParsedFirmware } from '../lib/firmware-parser';
+
+export function FlasherView({ connected, onConnect, onBusyChange, initialFile, initialParsedData }: {
     connected: boolean,
     onConnect: () => Promise<boolean>,
-    onBusyChange?: (isBusy: boolean) => void
+    onBusyChange?: (isBusy: boolean) => void,
+    initialFile?: File | null,
+    initialParsedData?: ParsedFirmware | null
 }) {
     const { toast } = useToast()
-    const { githubToken, customRepos, addCustomRepo } = usePreferences()
+    const { githubToken, customRepos, addCustomRepo, bootloaderDetected } = usePreferences()
 
     // GitHub Service
     const [ghService, setGhService] = useState(() => new GitHubService(githubToken))
@@ -190,6 +188,20 @@ export function FlasherView({ connected, onConnect, onBusyChange }: {
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     const [flashResult, setFlashResult] = useState<'success' | 'error' | null>(null)
     const [stats, setStats] = useState<SerialStats | null>(null)
+
+    // Sync with preloaded data
+    useEffect(() => {
+        if (initialFile) {
+            setFile(initialFile);
+        }
+    }, [initialFile]);
+
+    // Track initialParsedData to avoid unused lint
+    useEffect(() => {
+        if (initialParsedData) {
+            console.log("FlasherView received pre-parsed firmware:", initialParsedData.metadata?.version || "unknown");
+        }
+    }, [initialParsedData]);
 
     // UI State
     const [activeTab, setActiveTab] = useState("local")
@@ -418,327 +430,400 @@ export function FlasherView({ connected, onConnect, onBusyChange }: {
     }
 
     return (
-        <div className="flex flex-col gap-6 lg:max-w-5xl lg:mx-auto">
-            {/* Disclaimer */}
-            <Alert variant="default" className="bg-cyan-500/10 border-cyan-500/20 text-cyan-700 dark:text-cyan-300">
-                <AlertCircle className="h-4 w-4 text-cyan-500" />
-                <AlertDescription className="text-sm">
-                    Ensure the radio is in DFU mode by holding the <strong>PTT button</strong> while turning on the radio. The flashlight will turn on once the radio is in DFU mode.
-                </AlertDescription>
-            </Alert>
+        <div className="flex flex-col h-full bg-transparent">
+            <ScrollArea className="flex-1 bg-muted/5">
+                {!bootloaderDetected && !isFlashing ? (
+                    <div className="flex flex-col items-center justify-center h-full p-8 text-center space-y-6">
+                        <div className="w-20 h-20 rounded-full bg-amber-500/10 flex items-center justify-center mb-4">
+                            <AlertTriangle className="h-10 w-10 text-amber-500" />
+                        </div>
+                        <div className="max-w-md space-y-2">
+                            <h2 className="text-2xl font-bold tracking-tight">DFU Mode Required</h2>
+                            <p className="text-muted-foreground">
+                                To flash new firmware, your radio must be in <strong>DFU</strong> (Device Firmware Update) mode.
+                            </p>
+                        </div>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-4">
-                    <TabsTrigger value="local">Local File</TabsTrigger>
-                    <TabsTrigger value="online">Community Firmware</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="local" className="space-y-4">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <div className="p-2 rounded-lg bg-primary/10">
-                                    <FileCode className="h-5 w-5 text-primary" />
+                        <Card className="w-full max-w-sm border-amber-200 bg-amber-50/50 dark:border-amber-900/30 dark:bg-amber-950/10 text-left">
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm font-medium uppercase tracking-wider text-amber-700 dark:text-amber-400">Instructions</CardTitle>
+                            </CardHeader>
+                            <CardContent className="text-sm font-medium space-y-3">
+                                <div className="flex items-center gap-3">
+                                    <Badge variant="outline" className="h-6 w-6 rounded-full flex items-center justify-center p-0 border-amber-500/50 text-amber-600 bg-amber-100 dark:bg-amber-900/20 shrink-0">1</Badge>
+                                    <span>Turn <strong>OFF</strong> your radio</span>
                                 </div>
-                                Flash from File
-                            </CardTitle>
-                            <CardDescription>Select a .bin firmware file from your computer.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            {manualDownloadHint && (
-                                <Alert className="bg-emerald-500/10 border-emerald-500/20">
-                                    <Download className="h-4 w-4 text-emerald-500" />
-                                    <AlertTitle className="text-emerald-700 dark:text-emerald-400">Download Initiated</AlertTitle>
-                                    <AlertDescription className="text-emerald-600 dark:text-emerald-500 text-sm">
-                                        We've started downloading <strong>{manualDownloadHint}</strong>.
-                                        Please select it below once the download finishes.
-                                    </AlertDescription>
-                                </Alert>
-                            )}
-
-                            <div className="grid w-full gap-4">
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-center w-full">
-                                        <label htmlFor="dropzone-file" className={cn(
-                                            "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-muted/50 transition-colors",
-                                            file ? "border-primary bg-primary/5" : "border-muted-foreground/25"
-                                        )}>
-                                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                                {file ? (
-                                                    <>
-                                                        <FileCode className="w-8 h-8 mb-3 text-primary" />
-                                                        <p className="mb-1 text-sm text-foreground font-medium">{file.name}</p>
-                                                        <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Download className="w-8 h-8 mb-3 text-muted-foreground" />
-                                                        <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
-                                                        <p className="text-xs text-muted-foreground">Firmware Binary (.bin)</p>
-                                                    </>
-                                                )}
-                                            </div>
-                                            <Input
-                                                id="dropzone-file"
-                                                type="file"
-                                                accept=".bin"
-                                                className="hidden"
-                                                onChange={handleFileChange}
-                                                disabled={isFlashing}
-                                            />
-                                        </label>
-                                    </div>
+                                <div className="flex items-center gap-3">
+                                    <Badge variant="outline" className="h-6 w-6 rounded-full flex items-center justify-center p-0 border-amber-500/50 text-amber-600 bg-amber-100 dark:bg-amber-900/20 shrink-0">2</Badge>
+                                    <span>Hold <strong>PTT</strong> button</span>
                                 </div>
-                            </div>
-                        </CardContent>
-                        <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 p-4">
-                            <Button
-                                size="lg"
-                                onClick={startFlash}
-                                disabled={isFlashing || !file}
-                                className="w-full md:w-auto"
-                            >
-                                {isFlashing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-                                Flash Firmware
+                                <div className="flex items-center gap-3">
+                                    <Badge variant="outline" className="h-6 w-6 rounded-full flex items-center justify-center p-0 border-amber-500/50 text-amber-600 bg-amber-100 dark:bg-amber-900/20 shrink-0">3</Badge>
+                                    <span>Turn <strong>ON</strong> while holding PTT</span>
+                                </div>
+                            </CardContent>
+                            <CardFooter className="pt-0 pb-4 justify-center">
+                                <p className="text-xs text-muted-foreground text-center px-4">
+                                    The screen should remain off and the flashlight will turn on.
+                                </p>
+                            </CardFooter>
+                        </Card>
+
+                        {connected && !bootloaderDetected && (
+                            <p className="text-sm text-destructive font-medium">
+                                Device detected in Normal Mode. Please restart in DFU Mode.
+                            </p>
+                        )}
+
+                        {!connected && (
+                            <Button variant="outline" onClick={() => onConnect()}>
+                                Check Connection
                             </Button>
-                        </CardFooter>
-                    </Card>
-                </TabsContent>
+                        )}
+                    </div>
+                ) : (
+                    <div className="p-8 lg:max-w-5xl lg:mx-auto">
+                        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                            <TabsList className="grid w-full grid-cols-2 mb-4">
+                                <TabsTrigger value="local">Local File</TabsTrigger>
+                                <TabsTrigger value="online">Community Firmware</TabsTrigger>
+                            </TabsList>
 
-                <TabsContent value="online" className="space-y-4">
-                    <Card className="min-h-[500px]">
-                        {!selectedRepo ? (
-                            <>
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-7">
-                                    <div className="space-y-1">
+                            <TabsContent value="local" className="space-y-4">
+                                <Card>
+                                    <CardHeader>
                                         <CardTitle className="flex items-center gap-2">
-                                            <Github className="h-5 w-5" />
-                                            Community Repositories
+                                            <div className="p-2 rounded-lg bg-primary/10">
+                                                <FileCode className="h-5 w-5 text-primary" />
+                                            </div>
+                                            Flash from File
                                         </CardTitle>
-                                        <CardDescription>Browse and download firmware from the community.</CardDescription>
-                                    </div>
-                                    <div className="flex gap-2 w-full max-w-sm">
-                                        <Input
-                                            placeholder="Add 'user/repo'..."
-                                            value={newRepoInput}
-                                            onChange={(e) => setNewRepoInput(e.target.value)}
-                                            onKeyDown={(e) => e.key === 'Enter' && handleAddRepo()}
-                                            className="h-9"
-                                        />
-                                        <Button size="sm" variant="outline" onClick={handleAddRepo}>
-                                            <Plus className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </CardHeader>
-                                <CardContent>
-                                    {isLoadingRepos ? (
-                                        <div className="space-y-3">
-                                            {[1, 2, 3].map(i => (
-                                                <div key={i} className="flex items-center space-x-4">
-                                                    <Skeleton className="h-12 w-12 rounded-full" />
-                                                    <div className="space-y-2">
-                                                        <Skeleton className="h-4 w-[250px]" />
-                                                        <Skeleton className="h-4 w-[200px]" />
-                                                    </div>
+                                        <CardDescription>Select a firmware blob from your computer.</CardDescription>
+                                    </CardHeader>
+                                    <CardContent className="space-y-6">
+                                        {manualDownloadHint && (
+                                            <Alert className="bg-emerald-500/10 border-emerald-500/20">
+                                                <Download className="h-4 w-4 text-emerald-500" />
+                                                <AlertTitle className="text-emerald-700 dark:text-emerald-400">Download Initiated</AlertTitle>
+                                                <AlertDescription className="text-emerald-600 dark:text-emerald-500 text-sm">
+                                                    We've started downloading <strong>{manualDownloadHint}</strong>.
+                                                    Please select it below once the download finishes.
+                                                </AlertDescription>
+                                            </Alert>
+                                        )}
+
+                                        <div className="grid w-full gap-4">
+                                            <div className="space-y-4">
+                                                <div className="flex items-center justify-center w-full">
+                                                    <label htmlFor="dropzone-file" className={cn(
+                                                        "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-muted/50 transition-colors",
+                                                        file ? "border-primary bg-primary/5" : "border-muted-foreground/25"
+                                                    )}>
+                                                        <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                                            {file ? (
+                                                                <>
+                                                                    <FileCode className="w-8 h-8 mb-3 text-primary" />
+                                                                    <p className="mb-1 text-sm text-foreground font-medium">{file.name}</p>
+                                                                    <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <Download className="w-8 h-8 mb-3 text-muted-foreground" />
+                                                                    <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
+                                                                    <p className="text-xs text-muted-foreground">Firmware Binary (.bin)</p>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                        <Input
+                                                            id="dropzone-file"
+                                                            type="file"
+                                                            accept=".qsh,.bin,.hex"
+                                                            className="hidden"
+                                                            onChange={handleFileChange}
+                                                            disabled={isFlashing}
+                                                        />
+                                                    </label>
                                                 </div>
-                                            ))}
+                                            </div>
                                         </div>
+                                    </CardContent>
+                                    <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 p-4">
+                                        <Button
+                                            size="lg"
+                                            onClick={startFlash}
+                                            disabled={isFlashing || !file}
+                                            className="w-full md:w-auto"
+                                        >
+                                            {isFlashing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                                            Flash Firmware
+                                        </Button>
+                                    </CardFooter>
+                                </Card>
+                            </TabsContent>
+
+                            <TabsContent value="online" className="space-y-4">
+                                <Card className="min-h-[500px]">
+                                    {!selectedRepo ? (
+                                        <>
+                                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-7">
+                                                <div className="space-y-1">
+                                                    <CardTitle className="flex items-center gap-2">
+                                                        <Github className="h-5 w-5" />
+                                                        Community Repositories
+                                                    </CardTitle>
+                                                    <CardDescription>Browse and download firmware from the community.</CardDescription>
+                                                </div>
+                                                <div className="flex gap-2 w-full max-w-sm">
+                                                    <Input
+                                                        placeholder="Add 'user/repo'..."
+                                                        value={newRepoInput}
+                                                        onChange={(e) => setNewRepoInput(e.target.value)}
+                                                        onKeyDown={(e) => e.key === 'Enter' && handleAddRepo()}
+                                                        className="h-9"
+                                                    />
+                                                    <Button size="sm" variant="outline" onClick={handleAddRepo}>
+                                                        <Plus className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </CardHeader>
+                                            <CardContent>
+                                                {isLoadingRepos ? (
+                                                    <div className="space-y-3">
+                                                        {[1, 2, 3].map(i => (
+                                                            <div key={i} className="flex items-center space-x-4">
+                                                                <Skeleton className="h-12 w-12 rounded-full" />
+                                                                <div className="space-y-2">
+                                                                    <Skeleton className="h-4 w-[250px]" />
+                                                                    <Skeleton className="h-4 w-[200px]" />
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="grid gap-3 md:grid-cols-2">
+                                                        {repos.map(repo => (
+                                                            <div
+                                                                key={repo.id}
+                                                                className="group flex items-start gap-4 p-4 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all cursor-pointer"
+                                                                onClick={() => handleSelectRepo(repo)}
+                                                            >
+                                                                <Avatar className="h-10 w-10 border">
+                                                                    <AvatarImage src={repo.owner.avatar_url} />
+                                                                    <AvatarFallback>{repo.owner.login.substring(0, 2).toUpperCase()}</AvatarFallback>
+                                                                </Avatar>
+                                                                <div className="flex-1 min-w-0 space-y-1">
+                                                                    <div className="font-semibold flex items-center justify-between">
+                                                                        <span className="truncate">{repo.name}</span>
+                                                                        <Badge variant="secondary" className="text-[10px] font-normal group-hover:bg-background transition-colors">
+                                                                            {repo.owner.login}
+                                                                        </Badge>
+                                                                    </div>
+                                                                    <p className="text-xs text-muted-foreground line-clamp-2">
+                                                                        {repo.description || "No description provided."}
+                                                                    </p>
+                                                                    <div className="flex items-center gap-2 pt-2 text-[10px] text-muted-foreground">
+                                                                        <span className="flex items-center gap-1">
+                                                                            <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500" />
+                                                                            {repo.stargazers_count}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </CardContent>
+                                        </>
                                     ) : (
-                                        <div className="grid gap-3 md:grid-cols-2">
-                                            {repos.map(repo => (
-                                                <div
-                                                    key={repo.id}
-                                                    className="group flex items-start gap-4 p-4 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all cursor-pointer"
-                                                    onClick={() => handleSelectRepo(repo)}
-                                                >
-                                                    <Avatar className="h-10 w-10 border">
-                                                        <AvatarImage src={repo.owner.avatar_url} />
-                                                        <AvatarFallback>{repo.owner.login.substring(0, 2).toUpperCase()}</AvatarFallback>
-                                                    </Avatar>
-                                                    <div className="flex-1 min-w-0 space-y-1">
-                                                        <div className="font-semibold flex items-center justify-between">
-                                                            <span className="truncate">{repo.name}</span>
-                                                            <Badge variant="secondary" className="text-[10px] font-normal group-hover:bg-background transition-colors">
-                                                                {repo.owner.login}
-                                                            </Badge>
-                                                        </div>
-                                                        <p className="text-xs text-muted-foreground line-clamp-2">
-                                                            {repo.description || "No description provided."}
-                                                        </p>
-                                                        <div className="flex items-center gap-2 pt-2 text-[10px] text-muted-foreground">
-                                                            <span className="flex items-center gap-1">
-                                                                <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500" />
-                                                                {repo.stargazers_count}
-                                                            </span>
+                                        <>
+                                            <div className="border-b px-6 py-4 flex items-center justify-between bg-muted/20">
+                                                <div className="flex items-center gap-4">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="-ml-2 h-8"
+                                                        onClick={() => setSelectedRepo(null)}
+                                                    >
+                                                        <ArrowLeft className="mr-2 h-4 w-4" /> Back
+                                                    </Button>
+                                                    <Separator orientation="vertical" className="h-6" />
+                                                    <div className="flex items-center gap-3">
+                                                        <Avatar className="h-8 w-8">
+                                                            <AvatarImage src={selectedRepo.owner.avatar_url} />
+                                                            <AvatarFallback>?</AvatarFallback>
+                                                        </Avatar>
+                                                        <div>
+                                                            <div className="flex items-center gap-2">
+                                                                <h3 className="text-sm font-semibold leading-none">{selectedRepo.name}</h3>
+                                                                <Badge variant="outline" className="text-[10px] font-normal h-4 py-0">
+                                                                    {selectedRepo.owner.login}
+                                                                </Badge>
+                                                            </div>
+                                                            <p className="text-[10px] text-muted-foreground mt-0.5">{selectedRepo.full_name}</p>
                                                         </div>
                                                     </div>
                                                 </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </CardContent>
-                            </>
-                        ) : (
-                            <>
-                                <div className="border-b px-6 py-4 flex items-center justify-between bg-muted/20">
-                                    <div className="flex items-center gap-4">
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="-ml-2 h-8"
-                                            onClick={() => setSelectedRepo(null)}
-                                        >
-                                            <ArrowLeft className="mr-2 h-4 w-4" /> Back
-                                        </Button>
-                                        <Separator orientation="vertical" className="h-6" />
-                                        <div className="flex items-center gap-3">
-                                            <Avatar className="h-8 w-8">
-                                                <AvatarImage src={selectedRepo.owner.avatar_url} />
-                                                <AvatarFallback>?</AvatarFallback>
-                                            </Avatar>
-                                            <div>
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="text-sm font-semibold leading-none">{selectedRepo.name}</h3>
-                                                    <Badge variant="outline" className="text-[10px] font-normal h-4 py-0">
-                                                        {selectedRepo.owner.login}
-                                                    </Badge>
-                                                </div>
-                                                <p className="text-[10px] text-muted-foreground mt-0.5">{selectedRepo.full_name}</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex border rounded-lg p-0.5 bg-background">
-                                            <Button
-                                                variant={activeRepoTab === "releases" ? "secondary" : "ghost"}
-                                                size="sm"
-                                                className="h-7 text-xs px-2.5"
-                                                onClick={() => setActiveRepoTab("releases")}
-                                            >
-                                                Releases
-                                            </Button>
-                                            <Button
-                                                variant={activeRepoTab === "readme" ? "secondary" : "ghost"}
-                                                size="sm"
-                                                className="h-7 text-xs px-2.5"
-                                                onClick={() => setActiveRepoTab("readme")}
-                                                disabled={!readmeContent}
-                                            >
-                                                README
-                                            </Button>
-                                            <Button
-                                                variant={activeRepoTab === "license" ? "secondary" : "ghost"}
-                                                size="sm"
-                                                className="h-7 text-xs px-2.5"
-                                                onClick={() => setActiveRepoTab("license")}
-                                                disabled={!licenseContent}
-                                            >
-                                                License
-                                            </Button>
-                                        </div>
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8"
-                                            onClick={() => window.open(selectedRepo.html_url, "_blank")}
-                                            title="Open on GitHub"
-                                        >
-                                            <Github className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-
-                                <CardContent className="space-y-6 pt-6">
-                                    {isLoadingReleases ? (
-                                        <div className="flex items-center justify-center py-20">
-                                            <div className="flex flex-col items-center gap-3">
-                                                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                                <p className="text-xs text-muted-foreground animate-pulse">Syncing with GitHub...</p>
-                                            </div>
-                                        </div>
-                                    ) : activeRepoTab === "releases" ? (
-                                        releases.length === 0 ? (
-                                            <div className="text-center text-muted-foreground py-12 bg-muted/10 rounded-lg border border-dashed flex flex-col items-center gap-2">
-                                                <AlertCircle className="h-8 w-8 opacity-20" />
-                                                <p className="text-sm">No binary releases found for this repository.</p>
-                                            </div>
-                                        ) : (
-                                            <div className="grid gap-6 lg:grid-cols-3">
-                                                {/* Release Selection & Info */}
-                                                <div className="lg:col-span-1 space-y-4">
-                                                    <div className="space-y-2">
-                                                        <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                                                            <Github className="h-3 w-3" />
-                                                            Version
-                                                        </label>
-                                                        <Select
-                                                            value={selectedRelease?.id.toString()}
-                                                            onValueChange={(val) => setSelectedRelease(releases.find(r => r.id.toString() === val) || null)}
+                                                    <div className="flex border rounded-lg p-0.5 bg-background">
+                                                        <Button
+                                                            variant={activeRepoTab === "releases" ? "secondary" : "ghost"}
+                                                            size="sm"
+                                                            className="h-7 text-xs px-2.5"
+                                                            onClick={() => setActiveRepoTab("releases")}
                                                         >
-                                                            <SelectTrigger className="h-9">
-                                                                <SelectValue />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                {releases.map(r => (
-                                                                    <SelectItem key={r.id} value={r.id.toString()}>
-                                                                        <div className="flex items-center gap-2">
-                                                                            <span className="font-semibold">{r.tag_name}</span>
-                                                                            {r.prerelease && <Badge variant="secondary" className="text-[10px] h-3.5 px-1 bg-amber-500/10 text-amber-600 border-none">Beta</Badge>}
-                                                                        </div>
-                                                                    </SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
+                                                            Releases
+                                                        </Button>
+                                                        <Button
+                                                            variant={activeRepoTab === "readme" ? "secondary" : "ghost"}
+                                                            size="sm"
+                                                            className="h-7 text-xs px-2.5"
+                                                            onClick={() => setActiveRepoTab("readme")}
+                                                            disabled={!readmeContent}
+                                                        >
+                                                            README
+                                                        </Button>
+                                                        <Button
+                                                            variant={activeRepoTab === "license" ? "secondary" : "ghost"}
+                                                            size="sm"
+                                                            className="h-7 text-xs px-2.5"
+                                                            onClick={() => setActiveRepoTab("license")}
+                                                            disabled={!licenseContent}
+                                                        >
+                                                            License
+                                                        </Button>
                                                     </div>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="icon"
+                                                        className="h-8 w-8"
+                                                        onClick={() => window.open(selectedRepo.html_url, "_blank")}
+                                                        title="Open on GitHub"
+                                                    >
+                                                        <Github className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </div>
 
-                                                    {selectedRelease && (
-                                                        <div className="space-y-3 pt-4 border-t border-dashed">
-                                                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                                                                <Download className="h-3 w-3" />
-                                                                Firmware Assets
-                                                            </h4>
-                                                            <div className="space-y-2">
-                                                                {selectedRelease.assets.filter(a => a.name.endsWith('.bin')).map(asset => (
-                                                                    <Card key={asset.id} className="p-3 hover:bg-muted/5 transition-colors shadow-none border-dashed bg-muted/5 group">
-                                                                        <div className="flex flex-col gap-2">
-                                                                            <div className="flex justify-between items-start">
-                                                                                <span className="font-mono text-[11px] font-bold break-all group-hover:text-primary transition-colors">{asset.name}</span>
-                                                                            </div>
-                                                                            <div className="flex items-center justify-between gap-1.5 pt-1">
-                                                                                <span className="text-[10px] text-muted-foreground mr-auto font-mono">{(asset.size / 1024).toFixed(1)} KB</span>
-                                                                                <Button
-                                                                                    size="sm"
-                                                                                    variant="outline"
-                                                                                    className="h-7 text-[10px] px-2 font-medium"
-                                                                                    onClick={() => handleDownloadAsset(asset)}
-                                                                                    disabled={isFlashing}
-                                                                                >
-                                                                                    Download
-                                                                                </Button>
-                                                                                <Button
-                                                                                    size="sm"
-                                                                                    className="h-7 text-[10px] px-2 font-bold shadow-sm"
-                                                                                    onClick={() => handleDirectFlash(asset)}
-                                                                                    disabled={isFlashing}
-                                                                                >
-                                                                                    <Zap className="h-3 w-3 mr-1 fill-current" />
-                                                                                    Flash
-                                                                                </Button>
-                                                                            </div>
+                                            <CardContent className="space-y-6 pt-6">
+                                                {isLoadingReleases ? (
+                                                    <div className="flex items-center justify-center py-20">
+                                                        <div className="flex flex-col items-center gap-3">
+                                                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                                                            <p className="text-xs text-muted-foreground animate-pulse">Syncing with GitHub...</p>
+                                                        </div>
+                                                    </div>
+                                                ) : activeRepoTab === "releases" ? (
+                                                    releases.length === 0 ? (
+                                                        <div className="text-center text-muted-foreground py-12 bg-muted/10 rounded-lg border border-dashed flex flex-col items-center gap-2">
+                                                            <AlertCircle className="h-8 w-8 opacity-20" />
+                                                            <p className="text-sm">No binary releases found for this repository.</p>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="grid gap-6 lg:grid-cols-3">
+                                                            {/* Release Selection & Info */}
+                                                            <div className="lg:col-span-1 space-y-4">
+                                                                <div className="space-y-2">
+                                                                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                                                                        <Github className="h-3 w-3" />
+                                                                        Version
+                                                                    </label>
+                                                                    <Select
+                                                                        value={selectedRelease?.id.toString()}
+                                                                        onValueChange={(val) => setSelectedRelease(releases.find(r => r.id.toString() === val) || null)}
+                                                                    >
+                                                                        <SelectTrigger className="h-9">
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {releases.map(r => (
+                                                                                <SelectItem key={r.id} value={r.id.toString()}>
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <span className="font-semibold">{r.tag_name}</span>
+                                                                                        {r.prerelease && <Badge variant="secondary" className="text-[10px] h-3.5 px-1 bg-amber-500/10 text-amber-600 border-none">Beta</Badge>}
+                                                                                    </div>
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                </div>
+
+                                                                {selectedRelease && (
+                                                                    <div className="space-y-3 pt-4 border-t border-dashed">
+                                                                        <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                                                                            <Download className="h-3 w-3" />
+                                                                            Firmware Assets
+                                                                        </h4>
+                                                                        <div className="space-y-2">
+                                                                            {selectedRelease.assets.filter(a => a.name.endsWith('.bin')).map(asset => (
+                                                                                <Card key={asset.id} className="p-3 hover:bg-muted/5 transition-colors shadow-none border-dashed bg-muted/5 group">
+                                                                                    <div className="flex flex-col gap-2">
+                                                                                        <div className="flex justify-between items-start">
+                                                                                            <span className="font-mono text-[11px] font-bold break-all group-hover:text-primary transition-colors">{asset.name}</span>
+                                                                                        </div>
+                                                                                        <div className="flex items-center justify-between gap-1.5 pt-1">
+                                                                                            <span className="text-[10px] text-muted-foreground mr-auto font-mono">{(asset.size / 1024).toFixed(1)} KB</span>
+                                                                                            <Button
+                                                                                                size="sm"
+                                                                                                variant="outline"
+                                                                                                className="h-7 text-[10px] px-2 font-medium"
+                                                                                                onClick={() => handleDownloadAsset(asset)}
+                                                                                                disabled={isFlashing}
+                                                                                            >
+                                                                                                Download
+                                                                                            </Button>
+                                                                                            <Button
+                                                                                                size="sm"
+                                                                                                className="h-7 text-[10px] px-2 font-bold shadow-sm"
+                                                                                                onClick={() => handleDirectFlash(asset)}
+                                                                                                disabled={isFlashing}
+                                                                                            >
+                                                                                                <Zap className="h-3 w-3 mr-1 fill-current" />
+                                                                                                Flash
+                                                                                            </Button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </Card>
+                                                                            ))}
                                                                         </div>
-                                                                    </Card>
-                                                                ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Release Notes */}
+                                                            <div className="lg:col-span-2">
+                                                                <Card className="h-full border-none shadow-none bg-muted/5 rounded-xl border">
+                                                                    <ScrollArea className="h-[450px] p-6">
+                                                                        <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-bold prose-a:text-primary prose-blockquote:border-l-primary/30">
+                                                                            <h2 className="text-xl mb-4">{selectedRelease?.name || selectedRelease?.tag_name}</h2>
+                                                                            <ReactMarkdown
+                                                                                components={{
+                                                                                    ...MarkdownComponents,
+                                                                                    blockquote: ({ children }) => blockquoteRenderer(children)
+                                                                                }}
+                                                                                remarkPlugins={[remarkGfm]}
+                                                                                rehypePlugins={[rehypeRaw]}
+                                                                                urlTransform={(url) => {
+                                                                                    if (url.startsWith('http') || url.startsWith('#') || url.startsWith('data:')) return url;
+                                                                                    const base = `https://github.com/${selectedRepo?.full_name}`;
+                                                                                    const branch = selectedRepo?.default_branch || 'main';
+                                                                                    if (url.match(/\.(png|jpe?g|gif|svg|webp)$/i)) {
+                                                                                        return `${base}/raw/${branch}/${url.replace(/^\.\//, '')}`;
+                                                                                    }
+                                                                                    return `${base}/blob/${branch}/${url.replace(/^\.\//, '')}`;
+                                                                                }}
+                                                                            >
+                                                                                {selectedRelease?.body || "*No release notes provided.*"}
+                                                                            </ReactMarkdown>
+                                                                        </div>
+                                                                    </ScrollArea>
+                                                                </Card>
                                                             </div>
                                                         </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Release Notes */}
-                                                <div className="lg:col-span-2">
-                                                    <Card className="h-full border-none shadow-none bg-muted/5 rounded-xl border">
-                                                        <ScrollArea className="h-[450px] p-6">
-                                                            <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-bold prose-a:text-primary prose-blockquote:border-l-primary/30">
-                                                                <h2 className="text-xl mb-4">{selectedRelease?.name || selectedRelease?.tag_name}</h2>
+                                                    )
+                                                ) : activeRepoTab === "readme" ? (
+                                                    <Card className="border-none shadow-none bg-muted/5 rounded-xl border">
+                                                        <ScrollArea className="h-[550px] p-8">
+                                                            <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-bold prose-a:text-primary">
                                                                 <ReactMarkdown
                                                                     components={{
                                                                         ...MarkdownComponents,
@@ -756,65 +841,38 @@ export function FlasherView({ connected, onConnect, onBusyChange }: {
                                                                         return `${base}/blob/${branch}/${url.replace(/^\.\//, '')}`;
                                                                     }}
                                                                 >
-                                                                    {selectedRelease?.body || "*No release notes provided.*"}
+                                                                    {readmeContent || "# No README found"}
                                                                 </ReactMarkdown>
                                                             </div>
                                                         </ScrollArea>
                                                     </Card>
-                                                </div>
-                                            </div>
-                                        )
-                                    ) : activeRepoTab === "readme" ? (
-                                        <Card className="border-none shadow-none bg-muted/5 rounded-xl border">
-                                            <ScrollArea className="h-[550px] p-8">
-                                                <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-bold prose-a:text-primary">
-                                                    <ReactMarkdown
-                                                        components={{
-                                                            ...MarkdownComponents,
-                                                            blockquote: ({ children }) => blockquoteRenderer(children)
-                                                        }}
-                                                        remarkPlugins={[remarkGfm]}
-                                                        rehypePlugins={[rehypeRaw]}
-                                                        urlTransform={(url) => {
-                                                            if (url.startsWith('http') || url.startsWith('#') || url.startsWith('data:')) return url;
-                                                            const base = `https://github.com/${selectedRepo?.full_name}`;
-                                                            const branch = selectedRepo?.default_branch || 'main';
-                                                            if (url.match(/\.(png|jpe?g|gif|svg|webp)$/i)) {
-                                                                return `${base}/raw/${branch}/${url.replace(/^\.\//, '')}`;
-                                                            }
-                                                            return `${base}/blob/${branch}/${url.replace(/^\.\//, '')}`;
-                                                        }}
-                                                    >
-                                                        {readmeContent || "# No README found"}
-                                                    </ReactMarkdown>
-                                                </div>
-                                            </ScrollArea>
-                                        </Card>
-                                    ) : (
-                                        <Card className="border-none shadow-none bg-muted/5 rounded-xl border">
-                                            <ScrollArea className="h-[550px] p-8">
-                                                <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap font-mono text-[13px] opacity-80">
-                                                    {licenseContent || "No LICENSE found"}
-                                                </div>
-                                            </ScrollArea>
-                                        </Card>
+                                                ) : (
+                                                    <Card className="border-none shadow-none bg-muted/5 rounded-xl border">
+                                                        <ScrollArea className="h-[550px] p-8">
+                                                            <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap font-mono text-[13px] opacity-80">
+                                                                {licenseContent || "No LICENSE found"}
+                                                            </div>
+                                                        </ScrollArea>
+                                                    </Card>
+                                                )}
+                                            </CardContent>
+                                        </>
                                     )}
-                                </CardContent>
-                            </>
-                        )}
-                    </Card>
-                </TabsContent>
-            </Tabs>
-
+                                </Card>
+                            </TabsContent>
+                        </Tabs>
+                    </div>
+                )}
+            </ScrollArea>
             <FlashProgressDialog
                 isOpen={isDialogOpen}
                 onOpenChange={setIsDialogOpen}
-                isFlashing={isFlashing}
+                logs={logs}
                 progress={progress}
                 statusMessage={statusMessage}
-                logs={logs}
-                stats={stats}
                 flashResult={flashResult}
+                isFlashing={isFlashing}
+                stats={stats}
             />
         </div>
     )

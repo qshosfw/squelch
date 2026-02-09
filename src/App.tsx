@@ -18,7 +18,7 @@ import { CalibrationView } from "./components/calibration-view"
 import { ConsoleView } from "./components/console-view"
 import { SettingsView } from "./components/settings-view"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "@/components/ui/context-menu"
-import { Zap, Github, Terminal, Shield, ChevronRight, Settings } from "lucide-react"
+import { Zap, Github, Terminal, Shield, ChevronRight, Settings, LayoutDashboard, TableProperties, Wrench, Sliders, Radio, Activity } from "lucide-react"
 import { usePreferences } from "@/contexts/PreferencesContext"
 import { PreferencesDialog } from "@/components/preferences-dialog"
 import { RemoteView } from "./components/remote/RemoteView"
@@ -43,6 +43,11 @@ import { useRef, useEffect } from "react"
 import { FlashProgressDialog, type LogEntry } from "./components/flash-progress-dialog"
 import { parseFirmwareFile, ParsedFirmware } from './lib/firmware-parser';
 import { FirmwareMetadataDialog } from './components/firmware-metadata-dialog';
+import { processFile, ProcessedFile } from './lib/file-processor';
+import { QshDetailsDialog } from './components/qsh-details-dialog';
+import { TAG_G_TYPE, TAG_F_NAME, TAG_D_LABEL } from './lib/qsh';
+import { useHistory } from "@/hooks/use-history"
+import { Channel } from "@/lib/framework/module-interface"
 
 function App() {
     const [connected, setConnected] = useState(false)
@@ -57,6 +62,55 @@ function App() {
     } | undefined>(undefined);
     const [isPreferencesOpen, setIsPreferencesOpen] = useState(false)
     const [activeProfile, setActiveProfile] = useState<RadioProfile | null>(ModuleManager.getActiveProfile());
+    const [originalChannels, setOriginalChannels] = useState<any[]>([]);
+    const [originalSettings, setOriginalSettings] = useState<any>({});
+
+    // Undo/Redo History State
+    const {
+        state: channels,
+        set: setChannels,
+        replace: replaceChannels,
+        reset: resetChannels,
+        undo: undoChannels,
+        redo: redoChannels
+    } = useHistory<Channel[]>([]);
+
+    const {
+        state: settings,
+        set: setSettings,
+        reset: resetSettings,
+        undo: undoSettings,
+        redo: redoSettings
+    } = useHistory<any>({});
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Check for Ctrl+Z (Undo) and Ctrl+Shift+Z / Ctrl+Y (Redo)
+            const isCtrl = e.ctrlKey || e.metaKey;
+
+            if (isCtrl && e.key.toLowerCase() === 'z') {
+                if (e.shiftKey) {
+                    // Redo
+                    e.preventDefault();
+                    if (currentView === 'memories') redoChannels();
+                    else if (currentView === 'config') redoSettings();
+                } else {
+                    // Undo
+                    e.preventDefault();
+                    if (currentView === 'memories') undoChannels();
+                    else if (currentView === 'config') undoSettings();
+                }
+            } else if (isCtrl && e.key.toLowerCase() === 'y') {
+                // Redo (Windows style)
+                e.preventDefault();
+                if (currentView === 'memories') redoChannels();
+                else if (currentView === 'config') redoSettings();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [currentView, undoChannels, redoChannels, undoSettings, redoSettings]);
 
     useEffect(() => {
         return ModuleManager.subscribe(setActiveProfile);
@@ -77,6 +131,8 @@ function App() {
     const [showSkip, setShowSkip] = useState(false);
     const [consoleLogs, setConsoleLogs] = useState<{ id: number; timestamp: string; type: 'info' | 'error' | 'success' | 'tx' | 'rx'; content: string; }[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [pendingProcessedFile, setPendingProcessedFile] = useState<ProcessedFile | null>(null);
+    const [showQshDialog, setShowQshDialog] = useState(false);
 
     // generateSW strategy if not default? Defaults are usually fine.
     const { toast } = useToast()
@@ -107,10 +163,10 @@ function App() {
     }, [toast, setBootloaderDetected]);
 
     // DFU Detection Auto-Switch
-    // DFU Detection Auto-Switch
+    const lastDfuToastRef = useRef<number>(0);
     useEffect(() => {
         protocol.onDfuDetected = (version) => {
-            // Update device info immediately
+            // Update device info immediately (idempotent)
             setDeviceInfo({
                 version: `Bootloader ${version}`,
                 portInfo: protocol.getPortInfo()
@@ -123,10 +179,16 @@ function App() {
                     console.log("Auto-switching to flasher (DFU Detected)");
                     setCurrentView("flasher");
                     protocol.resetStats();
-                    toast({
-                        title: "DFU Mode Detected",
-                        description: `Bootloader ${version} detected. Switching to Flasher view...`,
-                    });
+
+                    // Prevent spamming notification (throttle 5s) using ref
+                    const now = Date.now();
+                    if (now - lastDfuToastRef.current > 5000) {
+                        toast({
+                            title: "DFU Mode Detected",
+                            description: `Bootloader ${version} detected. Switching to Flasher view...`,
+                        });
+                        lastDfuToastRef.current = now;
+                    }
                 }
             }
         };
@@ -315,52 +377,153 @@ function App() {
         }
     }
 
-    // Quick Actions Handlers
-    const handleImportFirmware = () => {
-        // Trigger hidden file input
+    // Unified File Handler
+    const handleOpenFile = () => {
         fileInputRef.current?.click();
     }
 
-    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleGlobalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
         try {
-            const parsed = await parseFirmwareFile(file);
-            setParsedFirmware(parsed);
-            setPendingFile(file);
+            const processed = await processFile(file);
+            setPendingProcessedFile(processed);
 
-            // Reset input so same file can be selected again
+            // Reset input
             e.target.value = '';
 
-            const proceed = async () => {
-                if (developerMode) {
-                    performFlash({ type: parsed.type, data: parsed.data, metadata: parsed.metadata });
-                } else {
-                    setShowMetadataDialog(true);
+            if (processed.type === "qsh") {
+                setShowQshDialog(true);
+            } else if (processed.type === "firmware") {
+                // Route to flasher
+                setCurrentView("flasher");
+                // The FlasherView will need to know about this file
+                // For now we'll use the existing pendingFile logic if possible, 
+                // but we might need to pass it as a prop.
+                setPendingFile(file);
+
+                // Parse for metadata dialog if it's firmware
+                try {
+                    const parsed = await parseFirmwareFile(file);
+                    setParsedFirmware(parsed);
+                    if (!developerMode) {
+                        setShowMetadataDialog(true);
+                    } else {
+                        performFlash(parsed);
+                    }
+                } catch (e) {
+                    console.warn("Fast-parse failed, falling back to raw file", e);
                 }
-            };
-
-            // Check connection
-            if (!connected) {
-                const success = await handleConnect();
-                if (!success) return;
+            } else if (processed.type === "calibration") {
+                setCurrentView("calib");
+                // Handled via props or context in next step
+                setPendingFile(file);
+            } else if (processed.type === "csv") {
+                setCurrentView("memories");
+                setPendingFile(file);
+            } else if (processed.type === "json") {
+                // Could be memories or settings, usually settings if .json
+                // But MemoryView also supports .json occasionally.
+                // Let's assume settings for now, or check content
+                setCurrentView("config");
+                setPendingFile(file);
+            } else {
+                toast({
+                    title: "Unknown File Type",
+                    description: "Squelch doesn't know how to handle this file yet.",
+                    variant: "destructive"
+                });
             }
-
-            await proceed();
 
         } catch (err: any) {
             toast({
-                title: "Error parsing firmware",
+                title: "Error processing file",
                 description: err.message,
                 variant: "destructive"
             });
         }
     }
 
+    const handleQshProceed = async (profileId: string) => {
+        if (!pendingProcessedFile?.qsh) return;
+        setShowQshDialog(false);
+
+        // 1. Enforce Profile Switch (Synchronous State Update Batching)
+        if (profileId) {
+            const newProfile = ModuleManager.getProfiles().find(p => p.id === profileId);
+            if (newProfile && newProfile.id !== activeProfile?.id) {
+                ModuleManager.setActiveProfile(newProfile);
+                // Force local state update IMMEDIATELY in the same render batch
+                // so that when pendingFile is set, MemoryView gets both props updated.
+                setActiveProfile(newProfile);
+            }
+        }
+
+        const qsh = pendingProcessedFile.qsh;
+        const globalType = qsh.globalMeta[TAG_G_TYPE];
+
+        // Find FW blob
+        const fwBlob = qsh.blobs.find(b =>
+            globalType === "firmware" ||
+            b.metadata[TAG_G_TYPE] === "firmware" ||
+            b.metadata[TAG_F_NAME]
+        );
+        // Find Calib blob
+        const calBlob = qsh.blobs.find(b =>
+            globalType === "calibration" ||
+            b.metadata[TAG_G_TYPE] === "calibration" ||
+            b.metadata[TAG_D_LABEL]?.toLowerCase().includes("calib")
+        );
+
+        if (fwBlob) {
+            setCurrentView("flasher");
+            const virtualFile = new File([fwBlob.data as any], fwBlob.metadata[TAG_F_NAME] || "firmware.bin", { type: "application/octet-stream" });
+            setPendingFile(virtualFile);
+
+            try {
+                const parsed = await parseFirmwareFile(virtualFile);
+                setParsedFirmware(parsed);
+                if (!developerMode) {
+                    setShowMetadataDialog(true);
+                } else {
+                    performFlash(parsed);
+                }
+            } catch (e) {
+                console.warn("QSH FW parse failed", e);
+            }
+        } else if (calBlob) {
+            setCurrentView("calib");
+            const virtualFile = new File([calBlob.data as any], calBlob.metadata[TAG_D_LABEL] || "calibration.dat", { type: "application/octet-stream" });
+            setPendingFile(virtualFile);
+        } else if (qsh.blobs.some(b => b.metadata[TAG_G_TYPE] === "channels" || globalType === "channels")) {
+            console.log("[App] QSH contains channels. Switching to MemoryView and passing file.");
+            setCurrentView("memories");
+            // Pass the original QSH file to MemoryView so it can handle multi-blob (channels + names) extraction
+            setPendingFile(pendingProcessedFile.file);
+        } else if (qsh.blobs.some(b => b.metadata[TAG_G_TYPE] === "config" || globalType === "settings")) {
+            console.log("[App] QSH contains settings. Switching to SettingsView and passing file.");
+            setCurrentView("config");
+            // Pass the original QSH file to SettingsView
+            setPendingFile(pendingProcessedFile.file);
+        } else {
+            toast({ title: "QSH Loaded", description: "Container processed successfully." });
+        }
+    }
+
     const performFlash = async (firmwareData?: ParsedFirmware) => {
         const targetFirmware = firmwareData || parsedFirmware;
         if (!targetFirmware && !pendingFile) return;
+
+        // Check connection first
+        if (!connected) {
+            toast({
+                title: "Connection Required",
+                description: "Please connect your radio before flashing.",
+            });
+            const success = await handleConnect();
+            if (!success) return;
+        }
 
         setShowFlashConfirm(false);
         setShowMetadataDialog(false);
@@ -481,9 +644,17 @@ function App() {
         };
     }, []);
 
-    const handleFlashFirmware = () => setCurrentView("flasher");
-    const handleBackupCalibration = () => setCurrentView("calib");
-    const handleRestoreCalibration = () => setCurrentView("calib");
+    const handleFlashFirmware = () => {
+        // Just switch to flasher view
+        setCurrentView("flasher");
+    }
+
+    const handleBackupCalibration = () => {
+        // Switch to calibration view
+        setCurrentView("calib");
+        // We might want to trigger the backup action automatically here?
+        // For now, just navigating is safer.
+    }
 
     const isDarkMode = theme === "dark";
     const toggleDarkMode = () => setTheme(isDarkMode ? "light" : "dark");
@@ -519,8 +690,16 @@ function App() {
                 type="file"
                 ref={fileInputRef}
                 className="hidden"
-                accept=".bin"
-                onChange={handleFileChange}
+                accept=".qsh,.bin,.hex,.dat,.csv,.json"
+                onChange={handleGlobalFileChange}
+            />
+
+            <QshDetailsDialog
+                open={showQshDialog}
+                onOpenChange={setShowQshDialog}
+                qsh={pendingProcessedFile?.qsh || null}
+                onProceed={handleQshProceed}
+                activeProfile={activeProfile}
             />
 
             {/* Flash Confirmation Dialog */}
@@ -593,10 +772,10 @@ function App() {
                         <Separator orientation="vertical" className="h-6" />
                         <TopMenuBar
                             onOpenPreferences={() => setIsPreferencesOpen(true)}
-                            onImportFirmware={handleImportFirmware}
+                            onImportFirmware={handleOpenFile}
                             onFlashFirmware={handleFlashFirmware}
                             onBackupCalibration={handleBackupCalibration}
-                            onRestoreCalibration={handleRestoreCalibration}
+                            onRestoreCalibration={handleOpenFile}
                             isDarkMode={isDarkMode}
                             onToggleDarkMode={toggleDarkMode}
                         />
@@ -613,7 +792,7 @@ function App() {
                             setCurrentView={setCurrentView}
                             openPreferences={() => setIsPreferencesOpen(true)}
                             triggerBackupCalibration={handleBackupCalibration}
-                            triggerImportFirmware={handleImportFirmware}
+                            triggerImportFirmware={handleOpenFile}
                         />
                     </div>
 
@@ -668,36 +847,45 @@ function App() {
                     />
 
                     <main className="flex-1 overflow-hidden bg-muted/10 relative flex flex-col">
-                        {/* Context Menu Wrapper for the whole main area for global quick actions */}
                         <ContextMenu>
                             <ContextMenuTrigger className="flex-1 flex flex-col min-h-0">
-                                <div className={cn(
-                                    "flex-1 flex flex-col min-h-0",
-                                    currentView !== 'memories' && "p-4 md:p-8"
-                                )}>
-                                    <div className={cn(
-                                        "w-full flex-1 flex flex-col min-h-0",
-                                        currentView !== 'memories' ? "mx-auto max-w-6xl space-y-8" : "space-y-0"
-                                    )}>
-                                        {currentView !== 'memories' && (
-                                            <div className="flex items-center justify-between shrink-0">
-                                                <div className="space-y-1">
-                                                    <h2 className="text-2xl font-bold tracking-tight capitalize">{currentView}</h2>
-                                                    <p className="text-sm text-muted-foreground">
-                                                        Manage your radio {currentView === 'overview' ? 'system status' : currentView}.
-                                                    </p>
-                                                </div>
+                                <div className="flex-1 flex flex-col min-h-0">
+                                    {/* Unified Page Header */}
+                                    <div className="flex items-center justify-between px-6 py-4 bg-background border-b shrink-0 h-14">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                                                {(() => {
+                                                    const iconSize = "h-5 w-5";
+                                                    switch (currentView) {
+                                                        case 'overview': return <LayoutDashboard className={iconSize} />;
+                                                        case 'memories': return <TableProperties className={iconSize} />;
+                                                        case 'config': return <Sliders className={iconSize} />;
+                                                        case 'flasher': return <Zap className={iconSize} />;
+                                                        case 'calib': return <Wrench className={iconSize} />;
+                                                        case 'remote': return <Radio className={iconSize} />;
+                                                        case 'console': return <Terminal className={iconSize} />;
+                                                        default: return <Activity className={iconSize} />;
+                                                    }
+                                                })()}
                                             </div>
-                                        )}
+                                            <div className="space-y-0.5">
+                                                <h2 className="text-base font-semibold tracking-tight capitalize">{currentView}</h2>
+                                                <p className="text-[11px] text-muted-foreground leading-none">
+                                                    {currentView === 'overview' ? 'Radio system status and health' : `Manage your radio ${currentView}`}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                                        {/* Content Rendering based on currentView */}
-                                        <div className={cn(
-                                            "flex-1 min-h-0",
-                                            currentView !== 'memories' ? "overflow-y-auto pr-2 -mr-2" : "flex flex-col"
-                                        )}>
+                                    <div className={cn(
+                                        "flex-1 flex flex-col min-h-0",
+                                        (currentView === 'overview') ? "p-4 md:p-8 overflow-y-auto" : "p-0 overflow-hidden"
+                                    )}>
+
+                                        <div className="flex-1 min-h-0 flex flex-col">
                                             <div className={cn(
                                                 "h-full",
-                                                currentView !== 'memories' && "space-y-4"
+                                                (currentView === 'overview') && "space-y-4"
                                             )}>
                                                 {currentView === 'overview' && (
                                                     <div className="space-y-6">
@@ -769,6 +957,15 @@ function App() {
                                                         connected={connected}
                                                         activeProfile={activeProfile}
                                                         onBusyChange={setIsBusy}
+                                                        deviceInfo={deviceInfo}
+                                                        originalChannels={originalChannels}
+                                                        onOriginalChannelsChange={setOriginalChannels}
+                                                        channels={channels}
+                                                        onChannelsChange={setChannels}
+                                                        onChannelsReplace={replaceChannels}
+                                                        onChannelsReset={resetChannels}
+                                                        pendingFile={pendingFile}
+                                                        onPendingFileConsumed={() => setPendingFile(null)}
                                                     />
                                                 )}
 
@@ -781,21 +978,43 @@ function App() {
                                                 )}
 
                                                 {currentView === 'calib' && (
-                                                    <CalibrationView connected={connected} onConnect={handleConnect} onBusyChange={setIsBusy} deviceInfo={deviceInfo} />
+                                                    <CalibrationView
+                                                        connected={connected}
+                                                        onConnect={handleConnect}
+                                                        onBusyChange={setIsBusy}
+                                                        deviceInfo={deviceInfo}
+                                                        activeProfile={activeProfile}
+                                                        initialFile={pendingFile}
+                                                    />
                                                 )}
 
                                                 {currentView === 'config' && (
-                                                    <SettingsView />
+                                                    <SettingsView
+                                                        connected={connected}
+                                                        activeProfile={activeProfile}
+                                                        onBusyChange={setIsBusy}
+                                                        deviceInfo={deviceInfo}
+                                                        originalSettings={originalSettings}
+                                                        onOriginalSettingsChange={setOriginalSettings}
+                                                        settings={settings}
+                                                        onSettingsChange={setSettings}
+                                                        onSettingsReset={resetSettings}
+                                                        pendingFile={pendingFile}
+                                                        onPendingFileConsumed={() => setPendingFile(null)}
+                                                    />
                                                 )}
 
-                                                {/* Render Active Profile Custom Pages */}
-                                                {activeProfile?.customPages?.map(page => {
-                                                    if (currentView === page.id) {
-                                                        const Component = page.component;
-                                                        return <Component key={page.id} />;
-                                                    }
-                                                    return null;
-                                                })}
+                                                {/* Dynamic Custom Pages */}
+                                                {activeProfile?.customPages?.map((page) => (
+                                                    currentView === page.id && (
+                                                        <page.component
+                                                            key={page.id}
+                                                            connected={connected}
+                                                            activeProfile={activeProfile}
+                                                            protocol={protocol}
+                                                        />
+                                                    )
+                                                ))}
                                             </div>
                                         </div>
                                     </div>
