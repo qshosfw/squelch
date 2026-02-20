@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Zap, Star, AlertCircle, Loader2, Download, Github, Plus, ArrowLeft, FileCode, Info, Lightbulb, AlertTriangle, AlertOctagon } from "lucide-react"
 import { protocol, SerialStats } from "@/lib/protocol"
+import { QSHFile, TAG_F_NAME, TAG_G_TYPE } from "@/lib/qsh"
 import { useToast } from "@/hooks/use-toast"
 import { useState, useRef, useEffect } from "react"
 import { FlashProgressDialog, LogEntry } from "./flash-progress-dialog"
@@ -409,7 +410,28 @@ export function FlasherView({ connected, onConnect, onBusyChange, initialFile, i
 
         try {
             const buffer = await file.arrayBuffer()
-            const firmware = new Uint8Array(buffer)
+            let firmware = new Uint8Array(buffer)
+
+            // Handle QSH container
+            if (file.name.toLowerCase().endsWith('.qsh')) {
+                addLog("QSH container detected, extracting firmware...", "info");
+                try {
+                    const qsh = await QSHFile.fromUint8Array(firmware);
+                    if (!qsh) throw new Error("Invalid QSH file");
+
+                    const fwBlob = qsh.blobs.find(b =>
+                        qsh.globalMeta[TAG_G_TYPE] === 'firmware' ||
+                        b.metadata[TAG_G_TYPE] === 'firmware' ||
+                        b.metadata[TAG_F_NAME]
+                    );
+
+                    if (!fwBlob) throw new Error("No firmware data found in QSH file");
+                    addLog(`Extracting: ${fwBlob.metadata[TAG_F_NAME] || "firmware.bin"} (${(fwBlob.data.length / 1024).toFixed(1)} KB)`, "info");
+                    firmware = fwBlob.data as any;
+                } catch (e: any) {
+                    throw new Error(`Failed to parse QSH: ${e.message}`);
+                }
+            }
 
             await protocol.flashFirmware(firmware)
 
@@ -530,7 +552,7 @@ export function FlasherView({ connected, onConnect, onBusyChange, initialFile, i
                                                                 <>
                                                                     <Download className="w-8 h-8 mb-3 text-muted-foreground" />
                                                                     <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
-                                                                    <p className="text-xs text-muted-foreground">Firmware Binary (.bin)</p>
+                                                                    <p className="text-xs text-muted-foreground">Firmware Binary (.bin, .hex, or .qsh)</p>
                                                                 </>
                                                             )}
                                                         </div>

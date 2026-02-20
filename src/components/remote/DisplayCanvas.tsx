@@ -106,9 +106,9 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
         const dimmedOriginalBg = applyBrightness(originalBg, brightness);
         const dimmedOriginalFg = applyBrightness(originalFg, brightness);
 
-        // Invert logic
-        const baseFgColor = invertLcd ? dimmedOriginalBg : dimmedOriginalFg;
-        const lcdBgColor = invertLcd ? dimmedOriginalFg : dimmedOriginalBg;
+        // Fix: Do not swap colors. LCD behaves identically but pixel values are flipped.
+        const baseFgColor = dimmedOriginalFg;
+        const lcdBgColor = dimmedOriginalBg;
         const paddingColor = dimmedOriginalBg;
 
         // Contrast Logic
@@ -141,10 +141,8 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
 
         // Grid effect color logic
         let gridColor = paddingColor;
-        if (!invertLcd) {
-            // In normal mode, slightly darken grid to be visible against the light background
-            gridColor = blendRgbStrings(paddingColor, dimmedOriginalFg, 0.08);
-        }
+        // In normal mode (or visually inverted via bits), slightly darken grid to be visible against the light background
+        gridColor = blendRgbStrings(paddingColor, dimmedOriginalFg, 0.08);
 
         // 2. Fill LCD area
         if (pixelLcd) {
@@ -172,7 +170,8 @@ export const DisplayCanvas: React.FC<DisplayCanvasProps> = ({
                 const drawX = px + (gapX / 2);
                 const drawY = py + (gapY / 2);
 
-                const isTargetOn = getBit(bitIndex, framebuffer);
+                const bitVal = getBit(bitIndex, framebuffer);
+                const isTargetOn = invertLcd ? (bitVal === 0) : (bitVal === 1);
                 const targetVal = isTargetOn ? 1.0 : 0.0;
 
                 let currentVal = ghostBuffer[bitIndex];

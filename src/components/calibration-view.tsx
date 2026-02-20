@@ -499,11 +499,11 @@ export function CalibrationView({ connected, onConnect, onBusyChange, deviceInfo
                                             <DropdownMenuContent align="end" className="w-[200px]">
                                                 <DropdownMenuItem onClick={() => handleBackup(false)} className="gap-2 cursor-pointer">
                                                     <FileJson className="h-4 w-4 text-muted-foreground" />
-                                                    <span>Export as .dat (Raw)</span>
+                                                    <span>Export raw .dat</span>
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={() => handleBackup(true)} className="gap-2 cursor-pointer">
                                                     <FileArchive className="h-4 w-4 text-primary" />
-                                                    <span>Export as .qsh (Package)</span>
+                                                    <span>Export as .qsh</span>
                                                 </DropdownMenuItem>
                                             </DropdownMenuContent>
                                         </DropdownMenu>

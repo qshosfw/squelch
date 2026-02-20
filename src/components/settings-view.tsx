@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { RadioProfile, SettingsSchema } from "@/lib/framework/module-interface"
 import { protocol } from "@/lib/protocol"
 import { Button } from "@/components/ui/button"
@@ -34,6 +34,8 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import { QSHFile, TAG_G_TITLE, TAG_G_AUTHOR, TAG_G_TYPE, TAG_G_DATE, TAG_D_LABEL, TAG_D_START_ADDR, TAG_D_END_ADDR, TAG_ID_RADIO_UID, TAG_ID_LABEL } from "@/lib/qsh"
 
 interface SettingsViewProps {
@@ -67,6 +69,8 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
     const [searchQuery, setSearchQuery] = useState("")
     const [hasRead, setHasRead] = useState(false)
     const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
+    const [isDragging, setIsDragging] = useState(false)
+    const fileInputRef = useRef<HTMLInputElement>(null)
     const { toast } = useToast()
 
     const loadSettings = async () => {
@@ -96,7 +100,17 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
             clearInterval(progressTimer)
             setProgress(100)
 
-            const decoded = activeProfile.decodeSettings({ settings: data })
+            const buffers: Record<string, Uint8Array> = { settings: data };
+            if (activeProfile.memoryMapping.extra) {
+                for (const [key, extRange] of Object.entries(activeProfile.memoryMapping.extra)) {
+                    if (key !== 'attributes' && key !== 'names') {
+                        let b = await protocol.readEEPROM(extRange.start, extRange.size);
+                        if (b) buffers[key] = b;
+                    }
+                }
+            }
+
+            const decoded = activeProfile.decodeSettings(buffers)
             if (onSettingsReset) onSettingsReset(decoded)
             else onSettingsChange(decoded)
             setHasRead(true)
@@ -132,11 +146,30 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
 
             // Read current first to merge (safe RMW)
             const currentData = await protocol.readEEPROM(range.start, range.size)
+            if (!currentData) throw new Error("Failed to read base settings");
 
-            const buffers = { settings: currentData }
+            const buffers: Record<string, Uint8Array> = { settings: currentData }
+
+            if (activeProfile.memoryMapping.extra) {
+                for (const [key, extRange] of Object.entries(activeProfile.memoryMapping.extra)) {
+                    if (key !== 'attributes' && key !== 'names') {
+                        let b = await protocol.readEEPROM(extRange.start, extRange.size);
+                        if (b) buffers[key] = b;
+                    }
+                }
+            }
+
             activeProfile.encodeSettings(settings, buffers)
 
             await protocol.writeEEPROM(range.start, buffers.settings)
+
+            if (activeProfile.memoryMapping.extra) {
+                for (const [key, extRange] of Object.entries(activeProfile.memoryMapping.extra)) {
+                    if (key !== 'attributes' && key !== 'names' && buffers[key]) {
+                        await protocol.writeEEPROM(extRange.start, buffers[key]);
+                    }
+                }
+            }
 
             clearInterval(progressTimer)
             setProgress(100)
@@ -199,7 +232,15 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
             const buffer = new Uint8Array(range.size);
             buffer.fill(0xFF);
 
-            const buffers = { settings: buffer };
+            const buffers: Record<string, Uint8Array> = { settings: buffer };
+            if (activeProfile.memoryMapping.extra) {
+                for (const [key, extRange] of Object.entries(activeProfile.memoryMapping.extra)) {
+                    if (key !== 'attributes' && key !== 'names') {
+                        buffers[key] = new Uint8Array(extRange.size).fill(0xFF);
+                    }
+                }
+            }
+
             activeProfile.encodeSettings(settings, buffers);
 
             qsh.addBlob(buffers.settings, {
@@ -210,6 +251,19 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
                 [TAG_ID_RADIO_UID]: (typeof numericUid === 'bigint') ? numericUid.toString() : "",
                 [TAG_ID_LABEL]: deviceInfo?.version || activeProfile.name
             });
+
+            if (activeProfile.memoryMapping.extra) {
+                for (const [key, extRange] of Object.entries(activeProfile.memoryMapping.extra)) {
+                    if (key !== 'attributes' && key !== 'names' && buffers[key]) {
+                        qsh.addBlob(buffers[key], {
+                            [TAG_G_TYPE]: "config",
+                            [TAG_D_LABEL]: `Radio Configuration ${key}`,
+                            [TAG_D_START_ADDR]: extRange.start,
+                            [TAG_D_END_ADDR]: extRange.start + extRange.size,
+                        });
+                    }
+                }
+            }
 
             const qshBytes = await qsh.toUint8Array();
             const blob = new Blob([qshBytes.buffer as ArrayBuffer], { type: 'application/octet-stream' });
@@ -268,13 +322,33 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
                 }
 
                 if (qsh) {
+                    const gType = qsh.globalMeta[TAG_G_TYPE];
+                    if (gType && gType !== "config" && gType !== "settings") {
+                        toast({ title: "Import Error", description: `Not a config/settings QSH file. Found type: ${gType}`, variant: "destructive" });
+                        return;
+                    }
+
                     const map = activeProfile.memoryMapping;
                     if (map.settings) {
                         const blob = qsh.blobs.find(b => b.metadata[TAG_D_START_ADDR] === map.settings!.start);
 
                         if (blob) {
-                            settingsData = blob.data;
-                            toast({ title: "QSH Detected", description: "Found settings data in container." });
+                            const buffers: Record<string, Uint8Array> = { settings: blob.data };
+                            if (map.extra) {
+                                for (const [key, extRange] of Object.entries(map.extra)) {
+                                    if (key !== 'attributes' && key !== 'names') {
+                                        const extBlob = qsh.blobs.find(b => b.metadata[TAG_D_START_ADDR] === extRange.start);
+                                        if (extBlob) buffers[key] = extBlob.data;
+                                    }
+                                }
+                            }
+                            const decoded = activeProfile.decodeSettings(buffers);
+                            if (onSettingsReset) onSettingsReset(decoded);
+                            else onSettingsChange(decoded);
+                            setHasRead(true);
+                            onOriginalSettingsChange?.(decoded);
+                            toast({ title: "Import Successful", description: "Binary configuration decoded from QSH." });
+                            return;
                         } else {
                             // Improved Fuzzy Search
                             const candidates = qsh.blobs.filter(b =>
@@ -614,6 +688,17 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
                                                                     />
                                                                 </div>
                                                             )}
+
+                                                            {item.type === 'string' && (
+                                                                <Input
+                                                                    id={`setting-${item.key}`}
+                                                                    type="text"
+                                                                    className="h-8 w-[200px] text-xs bg-muted/20 border-muted-foreground/20 px-2"
+                                                                    maxLength={1}
+                                                                    value={settings[item.key] ?? item.default ?? ''}
+                                                                    onChange={(e) => onSettingsChange({ ...settings, [item.key]: e.target.value })}
+                                                                />
+                                                            )}
                                                         </div>
                                                     </div>
                                                 ))}
@@ -622,6 +707,60 @@ export function SettingsView({ connected, activeProfile, onBusyChange, pendingFi
                                     </Collapsible>
                                 );
                             })
+                        ) : !searchQuery && Object.keys(settings).length === 0 && !loading ? (
+                            <div
+                                className={cn(
+                                    "flex flex-col items-center justify-center p-8 transition-all duration-300 min-h-[500px]",
+                                    isDragging ? "bg-primary/5" : "bg-transparent"
+                                )}
+                                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                onDragLeave={() => setIsDragging(false)}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    setIsDragging(false);
+                                    const file = e.dataTransfer.files[0];
+                                    if (file) handleImport({ target: { files: [file] } } as any);
+                                }}
+                            >
+                                <div
+                                    className={cn(
+                                        "w-full max-w-2xl border-2 border-dashed rounded-2xl p-16 transition-all duration-300 cursor-pointer group relative",
+                                        isDragging ? "border-primary bg-primary/10 scale-[1.02] shadow-xl" : "border-muted-foreground/20 hover:border-primary/40 hover:bg-muted/30"
+                                    )}
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    <input
+                                        type="file"
+                                        ref={fileInputRef}
+                                        className="hidden"
+                                        onChange={handleImport}
+                                        accept=".qsh,.bin,.json"
+                                    />
+                                    <div className="flex flex-col items-center gap-6 text-center">
+                                        <div className={cn(
+                                            "p-6 rounded-full bg-muted transition-all duration-300 group-hover:scale-110",
+                                            isDragging ? "bg-primary/20 scale-110" : "group-hover:bg-primary/10"
+                                        )}>
+                                            <Upload className={cn(
+                                                "h-12 w-12 text-muted-foreground transition-colors duration-300",
+                                                isDragging ? "text-primary" : "group-hover:text-primary"
+                                            )} />
+                                        </div>
+                                        <div className="space-y-3">
+                                            <h3 className="text-2xl font-semibold tracking-tight text-foreground">Import Settings</h3>
+                                            <p className="text-muted-foreground text-sm max-w-sm mx-auto leading-relaxed">
+                                                Connect and <span className="text-foreground font-semibold">Read from Radio</span> to load configuration,
+                                                or drag and drop a file here to restore.
+                                            </p>
+                                            <div className="flex items-center justify-center gap-2 pt-4">
+                                                <Badge variant="secondary" className="px-3 py-1 text-[10px] font-bold tracking-wider uppercase bg-primary/10 text-primary border-primary/20">.qsh</Badge>
+                                                <Badge variant="outline" className="px-3 py-1 text-[10px] font-bold tracking-wider uppercase">.bin</Badge>
+                                                <Badge variant="outline" className="px-3 py-1 text-[10px] font-bold tracking-wider uppercase">.json</Badge>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         ) : (
                             <div className="text-center py-20 text-muted-foreground text-sm">
                                 {searchQuery ? "No settings match your search." : "No settings available for this device."}

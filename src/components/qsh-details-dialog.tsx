@@ -61,12 +61,12 @@ export function QshDetailsDialog({ open, onOpenChange, qsh, onProceed, activePro
 
 
     const handleProceed = () => {
-        if (!selectedProfileId) {
-            // Should be blocked by UI, but safety check
+        const isRequired = ['channels', 'settings', 'config', 'generic', 'migration', 'backup'].includes(gType);
+        if (isRequired && !selectedProfileId) {
             return;
         }
 
-        // Pass the selected profile ID to the parent to handle synchronization
+        // Pass the selected profile ID if required, or empty/existing if not
         onProceed(selectedProfileId);
     }
 
@@ -108,34 +108,36 @@ export function QshDetailsDialog({ open, onOpenChange, qsh, onProceed, activePro
 
                 <ScrollArea className="flex-1 px-6">
                     <div className="space-y-6 pb-6">
-                        {/* Profile Selector Section */}
-                        <div className="bg-blue-50/50 dark:bg-blue-900/10 p-4 rounded-lg border border-blue-100 dark:border-blue-900/30 space-y-3">
-                            <div className="flex items-start gap-3">
-                                <Radio className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
-                                <div className="space-y-1 flex-1">
-                                    <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-100">Decoding Preset</h4>
-                                    <p className="text-xs text-blue-700 dark:text-blue-300 leading-normal">
-                                        Select the firmware profile to use for decoding this QSH file.
-                                        The binary data inside needs the correct preset to be interpreted correctly.
-                                    </p>
+                        {/* Profile Selector Section - Only if package contains user data (channels/settings) */}
+                        {['channels', 'settings', 'config', 'generic', 'migration', 'backup'].includes(gType) && (
+                            <div className="bg-blue-50/50 dark:bg-blue-900/10 p-4 rounded-lg border border-blue-100 dark:border-blue-900/30 space-y-3">
+                                <div className="flex items-start gap-3">
+                                    <Radio className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
+                                    <div className="space-y-1 flex-1">
+                                        <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-100">Decoding Preset</h4>
+                                        <p className="text-xs text-blue-700 dark:text-blue-300 leading-normal">
+                                            Select the radio profile to use for decoding this QSH file.
+                                            Non-firmware data inside needs the correct preset to be interpreted correctly.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="pl-8">
+                                    <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                                        <SelectTrigger className="w-full bg-background border-blue-200 dark:border-blue-800">
+                                            <SelectValue placeholder="Select a radio profile..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {profiles.map(p => (
+                                                <SelectItem key={p.id} value={p.id}>
+                                                    {p.name} <span className="text-muted-foreground ml-2 text-xs">({p.id})</span>
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
-
-                            <div className="pl-8">
-                                <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
-                                    <SelectTrigger className="w-full bg-background border-blue-200 dark:border-blue-800">
-                                        <SelectValue placeholder="Select a radio profile..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {profiles.map(p => (
-                                            <SelectItem key={p.id} value={p.id}>
-                                                {p.name} <span className="text-muted-foreground ml-2 text-xs">({p.id})</span>
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
+                        )}
 
                         <Separator />
 
@@ -268,7 +270,7 @@ export function QshDetailsDialog({ open, onOpenChange, qsh, onProceed, activePro
                     <Button variant="ghost" onClick={() => onOpenChange(false)}>
                         Cancel
                     </Button>
-                    <Button onClick={handleProceed} disabled={!selectedProfileId} className="font-semibold">
+                    <Button onClick={handleProceed} disabled={['channels', 'settings', 'config', 'generic', 'migration', 'backup'].includes(gType) && !selectedProfileId} className="font-semibold">
                         Proceed
                     </Button>
                 </DialogFooter>

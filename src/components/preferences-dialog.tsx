@@ -115,6 +115,8 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
         setGithubToken,
         autoConnect,
         setAutoConnect,
+        autoReadOnConnect,
+        setAutoReadOnConnect,
         customRepos,
         addCustomRepo,
         removeCustomRepo,
@@ -295,6 +297,18 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
 
                                     <div className="flex items-center justify-between">
                                         <div className="space-y-0.5">
+                                            <Label className="text-sm font-medium">Auto-Read on Connect</Label>
+                                            <p className="text-sm text-muted-foreground">
+                                                Automatically fetch channel memories when a radio is detected.
+                                            </p>
+                                        </div>
+                                        <Switch checked={autoReadOnConnect} onCheckedChange={setAutoReadOnConnect} />
+                                    </div>
+
+                                    <Separator />
+
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
                                             <Label className="text-sm font-medium">{t('prefs.profileSwitching', locale)}</Label>
                                             <p className="text-sm text-muted-foreground">
                                                 {t('prefs.profileSwitchingDesc', locale)}
@@ -460,15 +474,17 @@ export function PreferencesDialog({ open, onOpenChange }: PreferencesDialogProps
                                                     </p>
                                                 </div>
                                             ) : (
-                                                <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                                                    {customRepos.map((repo) => (
-                                                        <RepoCard
-                                                            key={repo}
-                                                            repo={repo}
-                                                            onRemove={() => removeCustomRepo(repo)}
-                                                        />
-                                                    ))}
-                                                </div>
+                                                <ScrollArea className="h-[200px] rounded-md border text-sm">
+                                                    <div className="space-y-2 p-2">
+                                                        {customRepos.map((repo) => (
+                                                            <RepoCard
+                                                                key={repo}
+                                                                repo={repo}
+                                                                onRemove={() => removeCustomRepo(repo)}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                </ScrollArea>
                                             )}
                                         </div>
                                     </div>

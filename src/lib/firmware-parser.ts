@@ -151,7 +151,7 @@ function parseIntelHex(hex: string): Uint8Array {
     let minAddr = Infinity;
     let maxAddr = 0;
 
-    // We'll parse into a temporary map first to avoid allocating 128MB+ buffers
+    // We'll parse into a temporary map first
     const chunks: { addr: number, data: Uint8Array }[] = [];
     let upperAddress = 0;
 
@@ -165,14 +165,24 @@ function parseIntelHex(hex: string): Uint8Array {
 
         if (type === 0x00) { // Data
             const absoluteAddr = upperAddress + addr;
-            if (absoluteAddr < minAddr) minAddr = absoluteAddr;
-            if (absoluteAddr + len > maxAddr) maxAddr = absoluteAddr + len;
 
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = parseInt(dataStr.substring(i * 2, i * 2 + 2), 16);
+            // Heuristic to ignore Option Bytes or RAM segments in GCC HEX outputs
+            // UV-K5 (PY32F071 / DP32G030) firmware flash starts at 0x0000 or 0x08000000
+            // and is strictly <= 128KB (0x00020000)
+            const flashLimit = 128 * 1024;
+            const isFlash = (absoluteAddr >= 0x08000000 && absoluteAddr < 0x08000000 + flashLimit) ||
+                (absoluteAddr < flashLimit);
+
+            if (isFlash) {
+                if (absoluteAddr < minAddr) minAddr = absoluteAddr;
+                if (absoluteAddr + len > maxAddr) maxAddr = absoluteAddr + len;
+
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = parseInt(dataStr.substring(i * 2, i * 2 + 2), 16);
+                }
+                chunks.push({ addr: absoluteAddr, data: bytes });
             }
-            chunks.push({ addr: absoluteAddr, data: bytes });
         } else if (type === 0x01) { // End of File
             break;
         } else if (type === 0x02) { // Extended Segment Address
@@ -186,21 +196,30 @@ function parseIntelHex(hex: string): Uint8Array {
 
     // Normalize base address
     // Common bases: 0x00000000, 0x08000000
-    let baseOffset = 0;
-    if (minAddr >= 0x08000000) {
+    // Squelch / UV-K5 specific: sometimes HEX files include bootloader or EEPROM ranges
+    // Most Custom Firmwares are mapped starting from 0x00000000 (after stripping offset)
+
+    let baseOffset = minAddr; // Always snap to the very first byte specified 
+    if (minAddr >= 0x08000000 && minAddr < 0x08020000) {
+        // Normal firmware start
         baseOffset = 0x08000000;
     }
 
-    // Allocate final buffer
-    // Typical firmware is < 64KB
+    // Allocate final buffer, tightly packed
     const totalSize = maxAddr - baseOffset;
+
     const buffer = new Uint8Array(totalSize);
+    buffer.fill(0xFF); // Unwritten flash is typically 0xFF
 
     // Fill buffer
     for (const chunk of chunks) {
         const offset = chunk.addr - baseOffset;
         if (offset >= 0 && offset + chunk.data.length <= buffer.length) {
             buffer.set(chunk.data, offset);
+        } else if (offset >= 0 && offset < buffer.length) {
+            // Partial copy if it overlaps the boundary
+            const fits = buffer.length - offset;
+            buffer.set(chunk.data.subarray(0, fits), offset);
         }
     }
 

@@ -9,6 +9,7 @@ interface Preferences {
     locale: SupportedLocale;
     // Connection
     autoConnect: boolean;
+    autoReadOnConnect: boolean;
     profileSwitchMode: 'auto' | 'prompt' | 'manual';
     // Developer
     githubToken: string;
@@ -30,6 +31,7 @@ interface PreferencesContextType extends Preferences {
     setDeveloperMode: (enabled: boolean) => void;
     setBootloaderDetected: (detected: boolean) => void;
     setAutoConnect: (enabled: boolean) => void;
+    setAutoReadOnConnect: (enabled: boolean) => void;
     setEnableBackupCache: (enabled: boolean) => void;
     setProfileSwitchMode: (mode: 'auto' | 'prompt' | 'manual') => void;
     setAutoSwitchToFlasher: (enabled: boolean) => void;
@@ -44,6 +46,7 @@ const defaultPreferences: Preferences = {
     developerMode: false,
     bootloaderDetected: false,
     autoConnect: false,
+    autoReadOnConnect: false,
     enableBackupCache: true,
     profileSwitchMode: 'auto',
     autoSwitchToFlasher: true,
@@ -115,6 +118,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         setPreferences(prev => ({ ...prev, autoConnect: enabled }));
     };
 
+    const setAutoReadOnConnect = (enabled: boolean) => {
+        setPreferences(prev => ({ ...prev, autoReadOnConnect: enabled }));
+    };
+
     const setEnableBackupCache = (enabled: boolean) => {
         setPreferences(prev => ({ ...prev, enableBackupCache: enabled }));
     };
@@ -138,6 +145,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
             setDeveloperMode: (enabled: boolean) => setPreferences(prev => ({ ...prev, developerMode: enabled })),
             setBootloaderDetected,
             setAutoConnect,
+            setAutoReadOnConnect,
             setEnableBackupCache,
             setProfileSwitchMode,
             setAutoSwitchToFlasher,

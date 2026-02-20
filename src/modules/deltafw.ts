@@ -38,36 +38,6 @@ interface DeviceInfo {
 
 // Battery Discharge Curves removed - using firmware reported percentage
 
-const LIST_POWER = ["ULOW", "LOW", "MID", "HIGH"];
-const LIST_MODE = ["FM", "NFM", "AM", "NAM", "USB", "BYP", "RAW", "DSB", "CW"];
-const LIST_SCRAMBLER = ["OFF", "2600Hz", "2700Hz", "2800Hz", "2900Hz", "3000Hz", "3100Hz", "3200Hz", "3300Hz", "3400Hz", "3500Hz"];
-const LIST_PTTID = ["OFF", "UP CODE", "DOWN CODE", "UP+DOWN CODE", "APOLLO QUINDAR"];
-const LIST_TONES = ["None", ...TONES.map(t => t.toFixed(1))];
-const LIST_DCS = ["None", ...DTCS_CODES.map(c => `D${c.toString().padStart(3, '0')}N`), ...DTCS_CODES.map(c => `D${c.toString().padStart(3, '0')}I`)];
-const LIST_SCAN_RESUME = ["STOP", "CARRIER", "TIMEOUT"];
-const LIST_COMPANDER = ["OFF", "ON"];
-const LIST_STEPS = [2.5, 5, 6.25, 10, 12.5, 25, 50, 100, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50];
-const LIST_MIC_GAIN = ["+1.1dB", "+4.0dB", "+8.0dB", "+12.0dB", "+15.1dB"];
-const LIST_SET_PTT = ["CLASSIC", "ONEPUSH"];
-const LIST_SET_TOT_EOT = ["OFF", "SOUND", "VISUAL", "ALL"];
-const LIST_SET_LCK = ["KEYS", "KEYS+PTT"];
-const LIST_SET_MET = ["TINY", "CLASSIC"];
-const LIST_SET_NFM = ["NARROW", "NARROWER"];
-const LIST_CHANNELDISP = ["FREQ", "NUMBER", "NAME", "NAME + FREQ"];
-const LIST_BATSAVE = ["OFF", "1:1", "1:2", "1:3", "1:4", "1:5"];
-const LIST_BATTYPE = ["1600 mAh K5", "2200 mAh K5", "3500 mAh K5", "1400 mAh K1", "2500 mAh K1"];
-const LIST_BAT_TXT = ["NONE", "VOLTAGE", "PERCENT"];
-const LIST_BL_LVL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
-const LIST_BL_TX_RX = ["OFF", "TX", "RX", "TX/RX"];
-const LIST_SCANLIST = ["None", "I", "II", "I+II", "III", "I+III", "II+III", "ALL"];
-const LIST_BL_TIME = ["OFF", "5s", "10s", "15s", "20s", "25s", "30s", "35s", "40s", "45s", "50s", "55s", "1m", "1m5s", "1m10s", "1m15s", "1m20s", "1m25s", "1m30s", "1m35s", "1m40s", "1m45s", "1m50s", "1m55s", "2m", "2m5s", "2m10s", "2m15s", "2m20s", "2m25s", "2m30s", "2m35s", "2m40s", "2m45s", "2m50s", "2m55s", "5m", "Always On"];
-const LIST_KEYACTIONS = [
-    "NONE", "FLASHLIGHT", "POWER", "MONITOR", "SCAN", "VOX", "ALARM",
-    "FM RADIO", "1750Hz TONE", "LOCK KEYPAD", "VFO A/B", "VFO/MEM",
-    "MODE", "BL_OFF", "RX MODE", "MAIN ONLY", "PTT", "W/N",
-    "BACKLIGHT", "MUTE", "POWER HIGH", "REMOVE OFFSET"
-];
-const LIST_VOX = ["OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 /**
  * DeltaFW Profile
  * Supports enhanced telemetry and custom device identification.
@@ -92,13 +62,13 @@ export class DeltaFWProfile extends BaseRadioModule {
 
     get memoryMapping(): MemoryConfig {
         return {
-            channels: { start: 0x0000, size: 200 * 16, stride: 16 },
-            settings: { start: 0x0E70, size: 0xB0 },
+            channels: { start: 0x0000, size: 200 * 16, stride: 16 }, // 0x0000 - 0x0C80
+            settings: { start: 0x0E70, size: 0xB0 }, // E70-EB0 + E90 Key config
             extra: {
                 attributes: { start: 0x0D60, size: 0x0E40 - 0x0D60 },
                 names: { start: 0x0F50, size: 200 * 16 },
-                settings_ext1: { start: 0x0F40, size: 0x10 },
-                settings_ext2: { start: 0x1FF0, size: 0x10 }
+                f40: { start: 0x0F40, size: 16 },
+                settings_ext: { start: 0x1FF0, size: 16 }
             }
         };
     }
@@ -138,109 +108,124 @@ export class DeltaFWProfile extends BaseRadioModule {
 
     get lists() {
         return {
-            POWER: LIST_POWER,
-            MODE: LIST_MODE,
-            SCRAMBLER: LIST_SCRAMBLER,
-            PTTID: LIST_PTTID,
-            TONES: LIST_TONES,
-            DCS: LIST_DCS,
-            SCAN_RESUME: LIST_SCAN_RESUME,
-            COMPANDER: LIST_COMPANDER,
-            STEPS: LIST_STEPS,
-            MIC_GAIN: LIST_MIC_GAIN,
-            SET_PTT: LIST_SET_PTT,
-            SET_TOT_EOT: LIST_SET_TOT_EOT,
-            SET_LCK: LIST_SET_LCK,
-            SET_MET: LIST_SET_MET,
-            SET_NFM: LIST_SET_NFM,
-            CHANNELDISP: LIST_CHANNELDISP,
-            BATSAVE: LIST_BATSAVE,
-            BATTYPE: LIST_BATTYPE,
-            BAT_TXT: LIST_BAT_TXT,
-            BL_LVL: LIST_BL_LVL,
-            BL_TX_RX: LIST_BL_TX_RX,
-            SCANLIST: LIST_SCANLIST,
-            BL_TIME: LIST_BL_TIME,
-            KEYACTIONS: LIST_KEYACTIONS,
-            VOX: LIST_VOX,
-        }
+            POWER: ["USER", "LOW 1", "LOW 2", "LOW 3", "LOW 4", "1W", "2W", "5W"],
+            MODE: ["FM", "NFM", "AM", "NAM", "USB", "BYP", "RAW", "DSB", "CW"],
+            SCRAMBLER: ["OFF", "2600Hz", "2700Hz", "2800Hz", "2900Hz", "3000Hz", "3100Hz", "3200Hz", "3300Hz", "3400Hz", "3500Hz"],
+            PTTID: ["OFF", "UP CODE", "DOWN CODE", "UP+DOWN CODE", "APOLLO QUINDAR"],
+            SCAN_RESUME: ["TO", "CO", "SE"],
+            COMPANDER: ["OFF", "TX", "RX", "TX/RX"],
+            STEPS: [2.5, 5, 6.25, 10, 12.5, 25, 8.33, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 1.25, 9, 15, 20, 30, 50, 100, 125, 200, 250, 500],
+            MIC_GAIN: ["+1.1dB", "+4.0dB", "+8.0dB", "+12.0dB", "+15.1dB"],
+            SET_PTT: ["CLASSIC", "ONEPUSH"],
+            SET_TOT_EOT: ["OFF", "SOUND", "VISUAL", "ALL"],
+            SET_LCK: ["KEYS", "KEYS+PTT"],
+            SET_MET: ["TINY", "CLASSIC"],
+            SET_NFM: ["NARROW", "NARROWER"],
+            SET_KEY: ["MENU", "KEY_UP", "KEY_DOWN", "KEY_EXIT", "KEY_STAR"],
+            RXMODE: ["MAIN ONLY", "DUAL RX RESPOND", "CROSS BAND", "MAIN TX DUAL RX"],
+            CHANNELDISP: ["Frequency", "Channel Number", "Name", "Name + Frequency"],
+            BATSAVE: ["OFF", "1:1", "1:2", "1:3", "1:4", "1:5"],
+            BATTYPE: ["1600 mAh K5", "2200 mAh K5", "3500 mAh K5", "1400 mAh K1", "2500 mAh K1"],
+            BAT_TXT: ["NONE", "VOLTAGE", "PERCENT"],
+            BL_LVL: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+            BL_TX_RX: ["OFF", "TX", "RX", "TX/RX"],
+            FLOCK: [
+                "DEFAULT+ (137-174, 400-470)", "FCC HAM (144-148, 420-450)", "CA HAM (144-148, 430-450)",
+                "CE HAM (144-146, 430-440)", "GB HAM (144-148, 430-440)", "137-174, 400-430",
+                "137-174, 400-438", "PMR 446", "GMRS FRS MURS", "DISABLE ALL", "UNLOCK ALL"
+            ],
+            BL_TIME: [
+                "OFF", "5s", "10s", "15s", "20s", "25s", "30s", "35s", "40s", "45s", "50s", "55s",
+                "1m", "1m5s", "1m10s", "1m15s", "1m20s", "1m25s", "1m30s", "1m35s", "1m40s", "1m45s", "1m50s", "1m55s",
+                "2m", "2m5s", "2m10s", "2m15s", "2m20s", "2m25s", "2m30s", "2m35s", "2m40s", "2m45s", "2m50s", "2m55s",
+                "5m", "Always On"
+            ],
+            VOICE: ["OFF", "Chinese", "English"],
+            TX_VFO: ["A", "B"],
+            ALARMMODE: ["SITE", "TONE"],
+            ROGER: ["OFF", "ROGER", "MDC"],
+            RTE: ["OFF", "100ms", "200ms", "300ms", "400ms", "500ms", "600ms", "700ms", "800ms", "900ms", "1000ms"],
+            VOX: ["OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+            KEYACTIONS: [
+                "NONE", "FLASHLIGHT", "POWER", "MONITOR", "SCAN", "VOX", "ALARM", "FM RADIO", "1750Hz TONE",
+                "LOCK KEYPAD", "VFO A / VFO B", "VFO / MEM", "MODE", "BL_MIN_TMP_OFF", "RX MODE", "MAIN ONLY",
+                "PTT", "WIDE / NARROW", "BACKLIGHT", "MUTE", "POWER HIGH", "REMOVE OFFSET"
+            ],
+            SCANLIST: ["None", "I", "II", "I+II", "III", "I+III", "II+III", "ALL"]
+        };
     }
 
 
 
     get settingsConfig(): SettingsSchema[] {
         return [
-            // Radio
-            { key: 'squelch', label: 'Squelch Level', type: 'range', min: 0, max: 9, group: 'Radio', default: 3, description: 'Adjusts the signal strength threshold to unmute the audio.' },
-            { key: 'tx_timeout_timer', label: 'TOT (Time Out Timer)', type: 'select', options: ["OFF", ...Array.from({ length: 10 }, (_, i) => `${(i + 1) * 30}s`)], group: 'Radio', default: 3, description: 'Limits maximum transmission duration.' },
-            { key: 'noaa_auto_scan', label: 'NOAA Auto Scan', type: 'switch', group: 'Radio', default: 0, description: 'Automatically scan NOAA weather channels.' },
-            { key: 'f_lock', label: 'Frequency Lock', type: 'select', options: ["OFF", "FCC", "CE", "GB", "LPD", "PMR"], group: 'Radio', default: 5, description: 'Restrict frequency ranges based on region.' },
+            // E70
+            { key: 'squelch', label: 'Squelch', type: 'range', min: 0, max: 9, group: 'Radio', default: 3 },
+            { key: 'bat_save', label: 'Battery Save', type: 'select', options: this.lists.BATSAVE, group: 'Power', default: 4 },
+            { key: 'dual_watch', label: 'Dual Watch', type: 'switch', group: 'Radio', default: 0 },
+            { key: 'backlight', label: 'Backlight Time', type: 'select', options: this.lists.BL_TIME, group: 'Display', default: 5 },
+            { key: 'bl_min', label: 'Backlight Min', type: 'select', options: this.lists.BL_LVL, group: 'Display', default: 0 },
+            { key: 'bl_max', label: 'Backlight Max', type: 'select', options: this.lists.BL_LVL, group: 'Display', default: 9 },
+            { key: 'ch_disp', label: 'Channel Display', type: 'select', options: this.lists.CHANNELDISP, group: 'Display', default: 2 },
+            { key: 'crossband', label: 'Crossband', type: 'select', options: this.lists.RXMODE, group: 'Radio', default: 0 },
+            { key: 'vox', label: 'VOX Enabled', type: 'switch', group: 'Audio', default: 0 },
+            { key: 'vox_level', label: 'VOX Level', type: 'select', options: this.lists.VOX, group: 'Audio', default: 1 },
+            { key: 'mic_gain', label: 'Mic Gain', type: 'select', options: this.lists.MIC_GAIN, group: 'Audio', default: 2 },
 
-            // Audio
-            { key: 'vox_switch', label: 'VOX Enabled', type: 'switch', group: 'Audio', default: 0, description: 'Voice Operated Transmit.' },
-            { key: 'vox_level', label: 'VOX Level', type: 'select', options: this.lists.VOX, group: 'Audio', default: 1, description: 'Sensitivity of VOX activation.' },
-            { key: 'mic_sensitivity', label: 'Microphone Gain', type: 'select', options: this.lists.MIC_GAIN, group: 'Audio', default: 2, description: 'Adjust microphone input level.' },
-            { key: 'beep_control', label: 'Key Beep', type: 'switch', group: 'Audio', default: 1, description: ' audible beep on key press.' },
-            { key: 'voice_prompt', label: 'Voice Prompt', type: 'select', options: ["OFF", "CHINESE", "ENGLISH"], group: 'Audio', default: 2, description: 'Spoken feedback for menu and channel changes.' },
-            { key: 'roger', label: 'Roger Beep', type: 'select', options: ["OFF", "ROGER", "MDC"], group: 'Audio', default: 0, description: 'End-of-transmission tone.' },
-            { key: 'alarm_mode', label: 'Alarm Mode', type: 'select', options: ["SITE", "TONE"], group: 'Audio', default: 0, description: 'Behavior when alarm is triggered.' },
+            // E90
+            { key: 'beep', label: 'Beep', type: 'switch', group: 'Audio', default: 1 },
+            { key: 'key_m', label: 'Key M Long', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 0 },
+            { key: 'key_1s', label: 'Side 1 Short', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 3 },
+            { key: 'key_1l', label: 'Side 1 Long', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 1 },
+            { key: 'key_2s', label: 'Side 2 Short', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 1 },
+            { key: 'key_2l', label: 'Side 2 Long', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 6 },
+            { key: 'scan_resume', label: 'Scan Resume', type: 'select', options: ["Time", "Carrier", "Search"], group: 'Radio', default: 1 }, // Simplification
 
-            // Display
-            { key: 'backlight_time', label: 'Backlight Timeout', type: 'select', options: this.lists.BL_TIME, group: 'Display', default: 5, description: 'Duration before backlight turns off.' },
-            { key: 'backlight_max', label: 'Backlight Max Brightness', type: 'select', options: this.lists.BL_LVL, group: 'Display', default: 10, description: 'Maximum brightness level.' },
-            { key: 'backlight_min', label: 'Backlight Min Brightness', type: 'select', options: this.lists.BL_LVL, group: 'Display', default: 0, description: 'Minimum brightness (dimmed state).' },
-            { key: 'channel_display_mode', label: 'Display Mode', type: 'select', options: this.lists.CHANNELDISP, group: 'Display', default: 2, description: 'Information shown on the main screen.' },
-            { key: 'power_on_display_mode', label: 'Power On Display', type: 'select', options: ["FULL SCREEN", "MESSAGE", "VOLTAGE"], group: 'Display', default: 0, description: 'Content shown during boot.' },
+            // EA0
+            { key: 'voice', label: 'Voice Prompt', type: 'select', options: this.lists.VOICE, group: 'Audio', default: 2 },
 
-            // Function
-            { key: 'repeater_tail', label: 'Repeater Tail', type: 'switch', group: 'Function', default: 0 },
+            // EA8
+            { key: 'roger', label: 'Roger Beep', type: 'select', options: this.lists.ROGER, group: 'Audio', default: 0 },
+            { key: 'ste', label: 'Repeater STE', type: 'select', options: this.lists.RTE, group: 'Audio', default: 5 },
+            { key: 'tx_vfo', label: 'TX VFO', type: 'select', options: this.lists.TX_VFO, group: 'Radio', default: 0 },
+            { key: 'bat_type', label: 'Battery Type', type: 'select', options: this.lists.BATTYPE, group: 'Power', default: 0 },
 
-
-
-            // Keys
-            { key: 'key_1_short', label: 'Side 1 Short', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 0 },
-            { key: 'key_1_long', label: 'Side 1 Long', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 0 },
-            { key: 'key_2_short', label: 'Side 2 Short', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 0 },
-            { key: 'key_2_long', label: 'Side 2 Long', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 0 },
-            { key: 'key_m_long_press', label: 'M Long Press', type: 'select', options: this.lists.KEYACTIONS, group: 'Keys', default: 0 },
-            { key: 'auto_keypad_lock', label: 'Auto Key Lock', type: 'switch', group: 'Keys', default: 0 },
-            { key: 'key_lock', label: 'Key Lock (Manual)', type: 'switch', group: 'Keys', default: 0 },
-            { key: 'menu_lock', label: 'Menu Lock', type: 'switch', group: 'Keys', default: 0 }, // Often handled by PTT+Side1 on boot, but setting exists?
-
-            // Power
-            { key: 'battery_type', label: 'Battery Type', type: 'select', options: this.lists.BATTYPE, group: 'Power', default: 0 },
-            { key: 'battery_save', label: 'Battery Save', type: 'select', options: this.lists.BATSAVE, group: 'Power', default: 4 },
-
-            // Extended Settings (0F40)
-            { key: 'tx_350', label: 'TX 350MHz', type: 'switch', group: 'Radio', default: 0 },
-            { key: 'tx_200', label: 'TX 200MHz', type: 'switch', group: 'Radio', default: 0 },
-            { key: 'tx_500', label: 'TX 500MHz', type: 'switch', group: 'Radio', default: 0 },
-            { key: 'en_350', label: 'Enable 350MHz', type: 'switch', group: 'Radio', default: 1 },
-            { key: 'scramble_enable', label: 'Scrambler Enable', type: 'switch', group: 'Radio', default: 1 },
-            { key: 'live_dtmf_decoder', label: 'Live DTMF Decoder', type: 'switch', group: 'Function', default: 1 },
-            { key: 'battery_text', label: 'Battery Text', type: 'select', options: this.lists.BAT_TXT, group: 'Display', default: 0 },
-            { key: 'mic_bar', label: 'Mic Bar', type: 'switch', group: 'Display', default: 1 },
+            // F40
+            { key: 'flock', label: 'Freq Lock', type: 'select', options: this.lists.FLOCK, group: 'Radio', default: 0 },
+            { key: 'bl_mode', label: 'Backlight Activation', type: 'select', options: this.lists.BL_TX_RX, group: 'Display', default: 3 },
             { key: 'am_fix', label: 'AM Fix', type: 'switch', group: 'Radio', default: 1 },
-            { key: 'backlight_tx_rx', label: 'Backlight TX/RX', type: 'select', options: this.lists.BL_TX_RX, group: 'Display', default: 0 },
+            { key: 'mic_bar', label: 'Mic Bar', type: 'switch', group: 'Display', default: 1 },
+            { key: 'bat_txt', label: 'Battery Text', type: 'select', options: this.lists.BAT_TXT, group: 'Display', default: 2 },
 
-            // Custom Mods (1FF0)
-            { key: 'set_inv', label: 'Inverted LCD', type: 'switch', group: 'Display', default: 0 },
-            { key: 'set_lck', label: 'Lock PTT', type: 'switch', group: 'Keys', default: 0 },
-            { key: 'set_met', label: 'Meter Style', type: 'select', options: this.lists.SET_MET, group: 'Display', default: 0 },
-            { key: 'set_gui', label: 'GUI Style', type: 'switch', group: 'Display', default: 0 },
-            { key: 'set_ctr', label: 'Contrast', type: 'range', min: 0, max: 15, group: 'Display', default: 10 },
-            { key: 'set_tot', label: 'TOT Warning', type: 'select', options: this.lists.SET_TOT_EOT, group: 'Audio', default: 0 },
-            { key: 'set_eot', label: 'EOT Warning', type: 'select', options: this.lists.SET_TOT_EOT, group: 'Audio', default: 0 },
-            { key: 'set_pwr', label: 'Power Msg', type: 'range', min: 0, max: 7, group: 'Display', default: 0 },
-            { key: 'set_ptt', label: 'PTT Mode', type: 'select', options: this.lists.SET_PTT, group: 'Keys', default: 0 },
+            // FF2
+            { key: 'contrast', label: 'Contrast', type: 'range', min: 0, max: 15, group: 'Display', default: 13 },
+            { key: 'invert', label: 'Invert Screen', type: 'switch', group: 'Display', default: 0 },
+            { key: 'gui', label: 'GUI Style', type: 'select', options: this.lists.SET_MET, group: 'Display', default: 1 },
+            { key: 'lock', label: 'Lock Mode', type: 'select', options: this.lists.SET_LCK, group: 'Keys', default: 0 },
+            { key: 'tot', label: 'TOT', type: 'select', options: this.lists.SET_TOT_EOT, group: 'Radio', default: 0 },
+            { key: 'eot', label: 'EOT', type: 'select', options: this.lists.SET_TOT_EOT, group: 'Radio', default: 0 },
+            { key: 'ptt_mode', label: 'PTT Mode', type: 'select', options: this.lists.SET_PTT, group: 'Keys', default: 0 },
+            { key: 'noaa_autoscan', label: 'NOAA Auto Scan', type: 'switch', group: 'Radio', default: 0 },
+            { key: 'alarm_mode', label: 'Alarm Mode', type: 'select', options: this.lists.ALARMMODE, group: 'Audio', default: 0 },
 
-            // DTMF (0ED0)
-            { key: 'dtmf_side_tone', label: 'DTMF Side Tone', type: 'switch', group: 'Audio', default: 1 },
-            { key: 'dtmf_separate_code', label: 'DTMF Separate', type: 'select', options: ['*', '#'], group: 'Function', default: 0 }, // Simplified
-            { key: 'dtmf_group_call_code', label: 'DTMF Group Call', type: 'select', options: ['*', '#'], group: 'Function', default: 1 },
-            { key: 'dtmf_decode_response', label: 'DTMF Response', type: 'select', options: ['None', 'Ring', 'Reply', 'Both'], group: 'Function', default: 0 },
-            { key: 'dtmf_auto_reset_time', label: 'DTMF Auto Reset', type: 'range', min: 5, max: 60, group: 'Function', default: 10 },
-            { key: 'permit_remote_kill', label: 'Remote Kill', type: 'switch', group: 'Function', default: 1 },
+            // Build Options (1FF0) - Features
+            { key: 'feat_dtmf', label: 'Enable DTMF Calling', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_pwd', label: 'Enable Password', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_1750', label: 'Enable 1750Hz', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_alarm', label: 'Enable Alarm', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_vox', label: 'Enable VOX', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_voice', label: 'Enable Voice', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_noaa', label: 'Enable NOAA', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_fm', label: 'Enable FM Radio', type: 'switch', group: 'Features', default: 1 },
+
+            // Build Options (1FF1)
+            { key: 'feat_rescue', label: 'Enable Rescue Ops', type: 'switch', group: 'Features', default: 0 },
+            { key: 'feat_scope', label: 'Enable Bandscope', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_am_fix', label: 'Enable AM Fix', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_game', label: 'Enable Game', type: 'switch', group: 'Features', default: 0 },
+            { key: 'feat_raw', label: 'Enable Raw Demod', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_wide', label: 'Enable Wide RX', type: 'switch', group: 'Features', default: 1 },
+            { key: 'feat_flash', label: 'Enable Flashlight', type: 'switch', group: 'Features', default: 1 },
         ];
     }
 
@@ -351,23 +336,42 @@ export class DeltaFWProfile extends BaseRadioModule {
             await session.sendCommand(MSG_BATT_REQ, new Uint8Array([]));
             const batResp = await batPromise;
 
-            if (batResp && batResp.length >= 4) {
+            if (batResp && batResp.length >= 12) {
+                // Buffer does not include the 4-byte header in the payload sometimes,
+                // Assuming it's the raw data payload from the response body.
+                // data size is 12 bytes
                 const dv = new DataView(batResp.buffer, batResp.byteOffset, batResp.byteLength);
-                const voltage = dv.getUint16(0, true) / 100;
-                const current = dv.getUint16(2, true) / 100;
-                // Simple logic for percent
-                const pct = Math.max(0, Math.min(100, ((voltage - 6.8) / 1.6) * 100));
+                // If it starts with ID (0x52A = 1322), maybe we need to skip 4 bytes header, but driver usually returns payload.
+                // Assuming driver strips the 4-byte Header_t.
+
+                const rawADC = dv.getUint16(0, true);
+                const current = dv.getUint16(2, true); // not really used by k5 but included struct
+                const percent = dv.getUint8(4);
+                // 5 is BatteryType
+                const flags = dv.getUint16(6, true);
+                const tempRaw = dv.getUint16(8, true);
+
+                // approximate temperature decoding for K5
+                const tempC = (tempRaw - 1800) / -8.5; // very rough heuristic, better than nothing
+
+                // The UV-K5 Custom FW UART payload sends gBatteryVoltageAverage * 10.
+                // 820 = 8.20V, thus 8200 is sent over UART for 8.2V.
+                const voltage = rawADC / 1000;
 
                 tele = {
                     ...tele,
                     batteryVoltage: voltage,
                     batteryCurrent: current,
-                    batteryPercentage: Math.round(pct),
-                    isCharging: voltage > 8.45
-                };
+                    batteryPercentage: percent,
+                    isCharging: !!(flags & 1),
+                    isLowBattery: !!(flags & 2),
+                    temperature: tempC
+                } as any;
                 success = true;
             }
-        } catch (e) { }
+        } catch (e) {
+            console.warn("[DeltaFW] Battery telemetry error", e);
+        }
 
         // RSSI
         try {
@@ -375,21 +379,31 @@ export class DeltaFWProfile extends BaseRadioModule {
             await session.sendCommand(MSG_RSSI_REQ, new Uint8Array([]));
             const rssiResp = await rssiPromise;
 
-            if (rssiResp && rssiResp.length >= 4) {
+            if (rssiResp && rssiResp.length >= 10) {
                 const dv = new DataView(rssiResp.buffer, rssiResp.byteOffset, rssiResp.byteLength);
-                const rawRssi = dv.getUint16(0, true) & 0x01FF;
-                const noise = dv.getUint8(2) & 0x7F;
-                // const glitch = dv.getUint8(3);
-                const dbm = Math.round((rawRssi / 2) - 160);
+
+                const rawRssi = dv.getUint16(0, true);
+                const exNoise = dv.getUint8(2);
+                const glitch = dv.getUint8(3);
+                const rssi_dBm = dv.getInt16(4, true);
+                const gain_dB = dv.getInt8(6);
+                const afAmp = dv.getUint8(7);
 
                 tele = {
                     ...tele,
-                    rssi: dbm,
-                    snr: noise
+                    rssi: rawRssi,
+                    rssi_dBm: rssi_dBm,
+                    snr: exNoise, // using ExNoiseIndicator as analogous to "snr" or noise in general
+                    noiseIndicator: exNoise,
+                    glitchIndicator: glitch,
+                    gain_dB: gain_dB,
+                    afAmplitude: afAmp
                 };
                 success = true;
             }
-        } catch (e) { }
+        } catch (e) {
+            console.warn("[DeltaFW] RSSI telemetry error", e);
+        }
 
         return success ? tele : null;
     }
@@ -455,17 +469,17 @@ export class DeltaFWProfile extends BaseRadioModule {
         else if (modIdx === 5) mode = "DSB";
         else if (modIdx === 6) mode = "CW";
 
-        const power = LIST_POWER[pwrIdx] || "USER";
+        const power = this.lists.POWER[pwrIdx] || "USER";
 
         const freqRev = (flags12 & 0x01) === 1;
         const busyLock = ((flags12 >> 5) & 0x01) === 1;
         const txLock = ((flags12 >> 6) & 0x01) === 1;
 
         const stepIdx = buffer[14];
-        const step = LIST_STEPS[stepIdx] || 2.5;
+        const step = this.lists.STEPS[stepIdx] || 2.5;
 
         const scramblerIdx = buffer[15];
-        const scrambler = LIST_SCRAMBLER[scramblerIdx] || "OFF";
+        const scrambler = this.lists.SCRAMBLER[scramblerIdx] || "OFF";
 
         let name = "";
         if (aux?.name) {
@@ -531,7 +545,7 @@ export class DeltaFWProfile extends BaseRadioModule {
         else if (c.duplex === "-") offDir = 2;
         buffer[11] = (modIdx & 0x0F) | ((offDir & 0x0F) << 4);
 
-        const pwrIdx = LIST_POWER.indexOf(c.power || "USER");
+        const pwrIdx = this.lists.POWER.indexOf(c.power || "USER");
         const pwrVal = pwrIdx >= 0 ? pwrIdx : 0;
         let flags12 = (c.freqRev ? 1 : 0) << 0
             | (bwNarrow ? 1 : 0) << 1
@@ -540,10 +554,10 @@ export class DeltaFWProfile extends BaseRadioModule {
             | (c.txLock ? 1 : 0) << 6;
         buffer[12] = flags12;
 
-        const steps = LIST_STEPS;
+        const steps = this.lists.STEPS;
         let stepIdx = steps.indexOf(parseFloat(String(c.step)));
         buffer[14] = stepIdx >= 0 ? stepIdx : 0;
-        let scramIdx = LIST_SCRAMBLER.indexOf(c.scrambler || "OFF");
+        let scramIdx = this.lists.SCRAMBLER.indexOf(c.scrambler || "OFF");
         buffer[15] = scramIdx >= 0 ? scramIdx : 0;
 
         if (aux?.attr) {
@@ -584,121 +598,9 @@ export class DeltaFWProfile extends BaseRadioModule {
         if (flag === 3 && idx < DTCS_CODES.length) return "D" + DTCS_CODES[idx] + "I";
         return "None";
     }
-    async readChannels(protocol: any, onProgress: (p: number) => void, onLiveUpdate?: (batch: Channel[]) => void): Promise<Channel[]> {
-        const info = await protocol.identify();
-        const timestamp = info.timestamp || 0;
+    // readChannels and writeChannels are now handled by BaseRadioModule
 
-        const mm = this.memoryMapping;
-        const range = mm.channels;
-        const stride = this.channelStride;
-        const count = this.channelCount;
-        const BATCH_SIZE = 10;
-        const EXTRA = mm.extra || {};
 
-        const allChannels: Channel[] = [];
-        let processed = 0;
-
-        for (let i = 0; i < count; i += BATCH_SIZE) {
-            const batchCount = Math.min(BATCH_SIZE, count - i);
-
-            // 1. Read Channel Data
-            const chStart = range.start + (i * stride);
-            const chSize = batchCount * stride;
-            const chBytes = await protocol.readEEPROM(chStart, chSize, timestamp);
-
-            // 2. Read Attributes (if exists)
-            let attrBytes: Uint8Array | null = null;
-            if (EXTRA.attributes) {
-                const atStart = EXTRA.attributes.start + i;
-                attrBytes = await protocol.readEEPROM(atStart, batchCount, timestamp);
-            }
-
-            // 3. Read Names (if exists)
-            let nameBytes: Uint8Array | null = null;
-            if (EXTRA.names) {
-                const nmStart = EXTRA.names.start + (i * 16);
-                nameBytes = await protocol.readEEPROM(nmStart, batchCount * 16, timestamp);
-            }
-
-            // 4. Decode Batch
-            const batchItems: Channel[] = [];
-            for (let k = 0; k < batchCount; k++) {
-                const totalIdx = i + k;
-                const cBuf = chBytes.slice(k * stride, (k + 1) * stride);
-                const auxData = {
-                    attr: attrBytes ? attrBytes.slice(k, k + 1) : undefined,
-                    name: nameBytes ? nameBytes.slice(k * 16, (k + 1) * 16) : undefined
-                };
-                const ch = this.decodeChannel(cBuf, totalIdx + 1, auxData);
-                batchItems.push(ch);
-
-                processed++;
-                onProgress(Math.round((processed / count) * 100));
-            }
-
-            allChannels.push(...batchItems);
-            if (onLiveUpdate) onLiveUpdate(batchItems);
-        }
-
-        return allChannels;
-    }
-
-    async writeChannels(protocol: any, channels: Channel[], onProgress: (p: number) => void): Promise<boolean> {
-        const info = await protocol.identify();
-        const timestamp = info.timestamp || 0;
-
-        const mm = this.memoryMapping;
-        const stride = this.channelStride;
-        const count = channels.length;
-        const BATCH_SIZE = 10;
-        const EXTRA = mm.extra || {};
-        let processed = 0;
-
-        for (let i = 0; i < count; i += BATCH_SIZE) {
-            const batchCount = Math.min(BATCH_SIZE, count - i);
-
-            // Prepare Buffers
-            const chBytes = new Uint8Array(batchCount * stride);
-            chBytes.fill(0xFF);
-            const attrBytes = EXTRA.attributes ? new Uint8Array(batchCount) : null;
-            if (attrBytes) attrBytes.fill(0xFF);
-            const nameBytes = EXTRA.names ? new Uint8Array(batchCount * 16) : null;
-            if (nameBytes) nameBytes.fill(0xFF);
-
-            // Encode
-            for (let k = 0; k < batchCount; k++) {
-                const idx = i + k;
-                if (idx >= channels.length) break;
-                const ch = channels[idx];
-                const cBuf = chBytes.subarray(k * stride, (k + 1) * stride);
-                const aux = {
-                    attr: attrBytes ? attrBytes.subarray(k, k + 1) : new Uint8Array(1),
-                    name: nameBytes ? nameBytes.subarray(k * 16, (k + 1) * 16) : new Uint8Array(16)
-                };
-                this.encodeChannel(ch, cBuf, idx + 1, aux);
-            }
-
-            // Write Ch
-            const chStart = mm.channels.start + (i * stride);
-            await protocol.writeEEPROM(chStart, chBytes, timestamp);
-
-            // Write Attr
-            if (attrBytes && EXTRA.attributes) {
-                const atStart = EXTRA.attributes.start + i;
-                await protocol.writeEEPROM(atStart, attrBytes, timestamp);
-            }
-
-            // Write Name
-            if (nameBytes && EXTRA.names) {
-                const nmStart = EXTRA.names.start + (i * 16);
-                await protocol.writeEEPROM(nmStart, nameBytes, timestamp);
-            }
-
-            processed += batchCount;
-            onProgress(Math.round((processed / count) * 100));
-        }
-        return true;
-    }
 
     private _encodeTone(toneStr: string): { flag: number, idx: number } {
         if (!toneStr || toneStr === "None") return { flag: 0, idx: 0 };
@@ -719,226 +621,259 @@ export class DeltaFWProfile extends BaseRadioModule {
 
     decodeSettings(buffers: { [key: string]: Uint8Array }): any {
         const s: any = {};
+
+        // Block 1: E70 (SETTINGS_MAIN 0x4000)
         const main = buffers.settings || new Uint8Array(0xB0);
+        const e70 = main.subarray(0x00, 0x10);
 
-        // 0E70
-        s.chan_1_call = main[0];
-        s.squelch = main[1];
-        s.tx_timeout_timer = main[2];
-        s.noaa_auto_scan = main[3];
-        s.key_lock = !!(main[4] & 0x01);
-        s.menu_lock = !!(main[4] & 0x02);
-        s.set_key = (main[4] >> 2) & 0x0F;
-        s.set_nav = !!(main[4] & 0x40);
-        s.vox_switch = !!main[5];
-        s.vox_level = main[6];
-        s.mic_sensitivity = main[7];
+        s.squelch = e70[1];
+        s.tot = e70[2];
+        s.noaa_autoscan = e70[3];
+        // e70[4] is KEY_LOCK, MENU_LOCK, SET_KEY, SET_NAV
+        s.vox = !!e70[5];
+        s.vox_level = e70[6];
+        s.mic_gain = e70[7];
 
-        const off78 = 0x08;
-        s.backlight_max = main[off78 + 0] & 0x0F;
-        s.backlight_min = (main[off78 + 0] >> 4) & 0x0F;
-        s.channel_display_mode = main[off78 + 1];
-        s.cross_band_rx_tx = main[off78 + 2];
-        s.battery_save = main[off78 + 3];
-        s.dual_watch = main[off78 + 4];
-        s.backlight_time = main[off78 + 5];
-        s.tail_tone_elimination = main[off78 + 6] & 0x01;
-        s.set_nfm = (main[off78 + 6] >> 1) & 0x01; // Example NFM flag
-        s.vfo_open = main[off78 + 7] & 0x01;
+        // BACKLIGHT_MAX is bits 0-3, BACKLIGHT_MIN is bits 4-7
+        s.bl_max = e70[8] & 0x0F;
+        s.bl_min = (e70[8] >> 4) & 0x0F;
 
-        // 0E90
-        const off90 = 0x20;
-        s.beep_control = main[off90 + 0] & 0x01;
-        s.key_m_long_press = (main[off90 + 0] >> 1) & 0x7F;
-        s.key_1_short = main[off90 + 1];
-        s.key_1_long = main[off90 + 2];
-        s.key_2_short = main[off90 + 3];
-        s.key_2_long = main[off90 + 4];
-        s.scan_resume_mode = main[off90 + 5];
-        s.auto_keypad_lock = main[off90 + 6];
-        s.power_on_display_mode = main[off90 + 7];
+        s.ch_disp = e70[9];
+        s.crossband = e70[10];
+        s.bat_save = e70[11];
+        s.dual_watch = e70[12];
+        s.backlight = e70[13];
 
-        // 0EA0
-        const offA0 = 0x30;
-        s.voice_prompt = main[offA0 + 0];
-        // RSSI levels at +1, +2
+        // e70[14] is TAIL_TONE_ELIMINATION (bit 0), NFM (bit 1)
+        s.tail_tone = e70[14] & 0x01;
 
-        // 0EA8
-        const offA8 = 0x38;
-        s.alarm_mode = main[offA8 + 0];
-        s.roger = main[offA8 + 1];
-        s.repeater_tail = main[offA8 + 2];
-        s.tx_vfo = main[offA8 + 3];
-        s.battery_type = main[offA8 + 4];
+        // Block 2: E90 (SETTINGS_EXTRA 0x7000)
+        const e90 = main.subarray(0x20, 0x30);
 
-        // 0ED0
-        const offD0 = 0x60;
-        s.dtmf_side_tone = main[offD0 + 0] & 0x01;
-        s.dtmf_separate_code = String.fromCharCode(main[offD0 + 1]);
-        s.dtmf_group_call_code = String.fromCharCode(main[offD0 + 2]);
-        s.dtmf_decode_response = main[offD0 + 3];
-        s.dtmf_auto_reset_time = main[offD0 + 4];
-        // Timers at 5,6,7...
+        // BEEP_CONTROL is bit 0, KEY_M_LONG_PRESS is bits 1-7
+        s.beep = e90[0] & 0x01;
+        s.key_m = (e90[0] >> 1) & 0x7F;
 
-        // 0ED8
-        const offD8 = 0x68;
-        s.permit_remote_kill = main[offD8 + 2] & 0x01;
+        s.key_1s = e90[1];
+        s.key_1l = e90[2];
+        s.key_2s = e90[3];
+        s.key_2l = e90[4];
+        s.scan_resume = e90[5];
 
-        // 0F40 - Extended
-        const ext1 = buffers.settings_ext1 || new Uint8Array(0x10);
-        s.f_lock = ext1[0];
-        s.tx_350 = ext1[1] & 0x01; // gSetting_350TX
-        s.killed = ext1[2] & 0x01;
-        s.tx_200 = ext1[3] & 0x01;
-        s.tx_500 = ext1[4] & 0x01;
-        s.en_350 = ext1[5] & 0x01;
-        s.scramble_enable = ext1[6] & 0x01;
+        s.power_on_pwd = main.subarray(0x28, 0x2C); // 4 bytes
 
-        s.live_dtmf_decoder = !!(ext1[7] & (1 << 0));
-        s.battery_text = (ext1[7] >> 1) & 0x07;
-        s.mic_bar = !!(ext1[7] & (1 << 4));
-        s.am_fix = !!(ext1[7] & (1 << 5));
-        s.backlight_tx_rx = (ext1[7] >> 6) & 0x03;
+        // Block 3: EA0
+        const ea0 = main.subarray(0x30, 0x38);
+        s.voice = ea0[0];
+        // EA0[1] = S0_LEVEL
+        // EA0[2] = S9_LEVEL
+        s.mic_agc = ea0[3];
 
-        // 1FF0 - Custom Mods
-        const ext2 = buffers.settings_ext2 || new Uint8Array(0x10);
-        // Byte 4: tmr? off?
-        // Byte 5: inv, lck, met, gui, ctr
-        const b5 = ext2[5];
-        s.set_inv = (b5 >> 4) & 0x01; // bit 4? No, settings.c: tmp = (Data[5] & 0xF0) >> 4; inv = tmp&1. So bit 4 of byte 5.
-        s.set_lck = (b5 >> 5) & 0x01;
-        s.set_met = (b5 >> 6) & 0x01;
-        s.set_gui = (b5 >> 7) & 0x01;
-        s.set_ctr = b5 & 0x0F;
+        // Block 4: EA8
+        const ea8 = main.subarray(0x38, 0x40);
+        s.alarm_mode = ea8[0];
+        s.roger = ea8[1];
+        s.ste = ea8[2];
+        s.tx_vfo = ea8[3];
+        s.bat_type = ea8[4];
 
-        // Byte 6: tot, eot
-        const b6 = ext2[6];
-        s.set_tot = (b6 >> 4) & 0x0F;
-        s.set_eot = b6 & 0x0F;
+        // Block 5: F40 (F_LOCK 0xB000)
+        const f40 = buffers.f40 || new Uint8Array(16);
+        s.flock = f40[0];
 
-        // Byte 7: pwr, ptt
-        const b7 = ext2[7];
-        s.set_pwr = (b7 >> 4) & 0x0F;
-        s.set_ptt = b7 & 0x0F;
+        // Bitpacked byte 7
+        const f40_7 = f40[7];
+        // LIVE_DTMF_DECODER: bit 0
+        // BATTERY_TEXT: bits 1-3
+        s.bat_txt = (f40_7 >> 1) & 0x07;
+        // MIC_BAR: bit 4
+        s.mic_bar = (f40_7 >> 4) & 0x01;
+        // AM_FIX: bit 5
+        s.am_fix = (f40_7 >> 5) & 0x01;
+        // BACKLIGHT_ON_TX_RX: bits 6-7
+        s.bl_mode = (f40_7 >> 6) & 0x03;
+
+        // Block 6: FF2 (1FF0)
+        const ext = buffers.settings_ext || new Uint8Array(16);
+
+        // 1FF0 - Build Options
+        const bOpt0 = ext[0];
+        s.feat_dtmf = bOpt0 & 0x01;
+        s.feat_pwd = (bOpt0 >> 1) & 0x01;
+        s.feat_1750 = (bOpt0 >> 2) & 0x01;
+        s.feat_alarm = (bOpt0 >> 3) & 0x01;
+        s.feat_vox = (bOpt0 >> 4) & 0x01;
+        s.feat_voice = (bOpt0 >> 5) & 0x01;
+        s.feat_noaa = (bOpt0 >> 6) & 0x01;
+        s.feat_fm = (bOpt0 >> 7) & 0x01;
+
+        // 1FF1 - Build Options 2
+        const bOpt1 = ext[1];
+        s.feat_rescue = (bOpt1 >> 1) & 0x01;
+        s.feat_scope = (bOpt1 >> 2) & 0x01;
+        s.feat_am_fix = (bOpt1 >> 3) & 0x01;
+        s.feat_game = (bOpt1 >> 4) & 0x01;
+        s.feat_raw = (bOpt1 >> 5) & 0x01;
+        s.feat_wide = (bOpt1 >> 6) & 0x01;
+        s.feat_flash = (bOpt1 >> 7) & 0x01;
+
+        const ff2 = ext.subarray(2, 10);
+
+        // Byte 2 (Index 2 in FF2, 1FF4 in Map) -> State[4]
+        const ff2_2 = ff2[2];
+        s.set_tmr = ff2_2 & 0x01;
+        s.set_off_tmr = (ff2_2 >> 1) & 0x7F; // 7 bits
+
+        // Byte 3 (Index 3, 1FF5) -> State[5]
+        const ff2_3 = ff2[3];
+        s.contrast = ff2_3 & 0x0F;
+        s.invert = (ff2_3 >> 4) & 0x01;
+        s.lock = (ff2_3 >> 5) & 0x01;
+        s.gui = (ff2_3 >> 7) & 0x01;
+        s.meter = (ff2_3 >> 6) & 0x01; // Assuming met maps to meter/gui style variant
+
+        // Byte 4 (Index 4, 1FF6) -> State[6]
+        const ff2_4 = ff2[4];
+        s.tot = (ff2_4 >> 4) & 0x0F;
+        s.eot = ff2_4 & 0x0F;
+
+        // Byte 5 (Index 5, 1FF7) -> State[7]
+        const ff2_5 = ff2[5];
+        s.ptt_mode = ff2_5 & 0x0F;
+        s.pwr_mode = (ff2_5 >> 4) & 0x0F;
 
         return s;
     }
 
     encodeSettings(s: any, buffers: { [key: string]: Uint8Array }): void {
         const main = buffers.settings || new Uint8Array(0xB0);
-        const ext1 = buffers.settings_ext1 || new Uint8Array(0x10);
-        const ext2 = buffers.settings_ext2 || new Uint8Array(0x10);
+        const f40 = buffers.f40 || new Uint8Array(16);
+        const ext = buffers.settings_ext || new Uint8Array(16);
 
-        // 0E70
-        // chan_1_call 0
-        if (s.squelch !== undefined) main[1] = s.squelch;
-        if (s.tx_timeout_timer !== undefined) main[2] = s.tx_timeout_timer;
-        if (s.noaa_auto_scan !== undefined) main[3] = s.noaa_auto_scan ? 1 : 0;
+        // Block 1: E70 (SETTINGS_MAIN 0x4000)
+        const e70 = main.subarray(0x00, 0x10);
+        if (s.squelch !== undefined) e70[1] = s.squelch;
+        if (s.tot !== undefined) e70[2] = s.tot;
+        if (s.noaa_autoscan !== undefined) e70[3] = s.noaa_autoscan;
+        if (s.vox !== undefined) e70[5] = s.vox ? 1 : 0;
+        if (s.vox_level !== undefined) e70[6] = s.vox_level;
+        if (s.mic_gain !== undefined) e70[7] = s.mic_gain;
 
-        // main[4] is packed flags
-        let v4 = main[4];
-        if (s.key_lock !== undefined) v4 = (v4 & ~0x01) | (s.key_lock ? 0x01 : 0);
-        if (s.menu_lock !== undefined) v4 = (v4 & ~0x02) | (s.menu_lock ? 0x02 : 0);
-        // set_key >> 2 & 0x0F
-        // set_nav & 0x40
-        main[4] = v4;
+        // BACKLIGHT_MAX is bits 0-3, BACKLIGHT_MIN is bits 4-7
+        if (s.bl_max !== undefined || s.bl_min !== undefined) {
+            let temp8 = e70[8];
+            if (s.bl_max !== undefined) temp8 = (temp8 & 0xF0) | (s.bl_max & 0x0F);
+            if (s.bl_min !== undefined) temp8 = (temp8 & 0x0F) | ((s.bl_min & 0x0F) << 4);
+            e70[8] = temp8;
+        }
 
-        if (s.vox_switch !== undefined) main[5] = s.vox_switch ? 1 : 0;
-        if (s.vox_level !== undefined) main[6] = s.vox_level;
-        if (s.mic_sensitivity !== undefined) main[7] = s.mic_sensitivity;
+        if (s.ch_disp !== undefined) e70[9] = s.ch_disp;
+        if (s.crossband !== undefined) e70[10] = s.crossband;
+        if (s.bat_save !== undefined) e70[11] = s.bat_save;
+        if (s.dual_watch !== undefined) e70[12] = s.dual_watch;
+        if (s.backlight !== undefined) e70[13] = s.backlight;
 
-        const off78 = 0x08;
-        // main[off78+0] packed backlight
-        let vBL = main[off78 + 0];
-        if (s.backlight_max !== undefined) vBL = (vBL & 0xF0) | (s.backlight_max & 0x0F);
-        if (s.backlight_min !== undefined) vBL = (vBL & 0x0F) | ((s.backlight_min & 0x0F) << 4);
-        main[off78 + 0] = vBL;
+        // TAIL_TONE_ELIMINATION
+        if (s.tail_tone !== undefined) {
+            e70[14] = (e70[14] & 0xFE) | (s.tail_tone & 0x01);
+        }
 
-        if (s.channel_display_mode !== undefined) main[off78 + 1] = s.channel_display_mode;
-        if (s.cross_band_rx_tx !== undefined) main[off78 + 2] = s.cross_band_rx_tx;
-        if (s.battery_save !== undefined) main[off78 + 3] = s.battery_save;
-        if (s.dual_watch !== undefined) main[off78 + 4] = s.dual_watch;
-        if (s.backlight_time !== undefined) main[off78 + 5] = s.backlight_time;
+        // Block 2: E90
+        const e90 = main.subarray(0x20, 0x30);
+        if (s.key_m !== undefined || s.beep !== undefined) {
+            let temp0 = e90[0];
+            if (s.key_m !== undefined) temp0 = (temp0 & 0x80) | (s.key_m & 0x7F);
+            if (s.beep !== undefined) temp0 = (temp0 & 0x7F) | ((s.beep & 0x01) << 7);
+            e90[0] = temp0;
+        }
 
-        // main[off78+6] packed tail tone / nfm
-        let vTT = main[off78 + 6];
-        if (s.tail_tone_elimination !== undefined) vTT = (vTT & ~0x01) | (s.tail_tone_elimination ? 1 : 0);
-        // if (s.set_nfm !== undefined) ...
-        main[off78 + 6] = vTT;
+        if (s.key_1s !== undefined) e90[1] = s.key_1s;
+        if (s.key_1l !== undefined) e90[2] = s.key_1l;
+        if (s.key_2s !== undefined) e90[3] = s.key_2s;
+        if (s.key_2l !== undefined) e90[4] = s.key_2l;
+        if (s.scan_resume !== undefined) e90[5] = s.scan_resume;
 
-        if (s.vfo_open !== undefined) main[off78 + 7] = s.vfo_open ? 1 : 0;
+        // Block 3: EA0
+        const ea0 = main.subarray(0x30, 0x38);
+        if (s.voice !== undefined) ea0[0] = s.voice;
 
-        const off90 = 0x20;
-        // main[off90+0] packed beep / long press m
-        let vBP = main[off90 + 0];
-        if (s.beep_control !== undefined) vBP = (vBP & ~0x01) | (s.beep_control ? 1 : 0);
-        if (s.key_m_long_press !== undefined) vBP = (vBP & 0x01) | ((s.key_m_long_press & 0x7F) << 1);
-        main[off90 + 0] = vBP;
+        // Block 4: EA8
+        const ea8 = main.subarray(0x38, 0x40);
+        if (s.alarm_mode !== undefined) ea8[0] = s.alarm_mode;
+        if (s.roger !== undefined) ea8[1] = s.roger;
+        if (s.ste !== undefined) ea8[2] = s.ste;
+        if (s.tx_vfo !== undefined) ea8[3] = s.tx_vfo;
+        if (s.bat_type !== undefined) ea8[4] = s.bat_type;
 
-        if (s.key_1_long !== undefined) main[off90 + 2] = s.key_1_long;
-        if (s.key_2_long !== undefined) main[off90 + 4] = s.key_2_long;
-        if (s.scan_resume_mode !== undefined) main[off90 + 5] = s.scan_resume_mode;
-        if (s.auto_keypad_lock !== undefined) main[off90 + 6] = s.auto_keypad_lock ? 1 : 0;
-        if (s.power_on_display_mode !== undefined) main[off90 + 7] = s.power_on_display_mode;
+        // Block 5: F40
+        if (s.flock !== undefined) f40[0] = s.flock;
+        if (s.bl_mode !== undefined || s.mic_bar !== undefined || s.bat_txt !== undefined || s.am_fix !== undefined) {
+            let f40_7 = f40[7];
+            if (s.bl_mode !== undefined) f40_7 = (f40_7 & ~(0x03 << 6)) | ((s.bl_mode & 0x03) << 6);
+            if (s.mic_bar !== undefined) f40_7 = (f40_7 & ~(0x01 << 4)) | ((s.mic_bar & 0x01) << 4);
+            if (s.bat_txt !== undefined) f40_7 = (f40_7 & ~(0x03 << 2)) | ((s.bat_txt & 0x03) << 2);
+            if (s.am_fix !== undefined) f40_7 = (f40_7 & ~(0x01 << 5)) | ((s.am_fix & 0x01) << 5);
+            f40[7] = f40_7;
+        }
 
-        // 0EA8
-        const offA8 = 0x38;
-        if (s.alarm_mode !== undefined) main[offA8 + 0] = s.alarm_mode;
-        if (s.roger !== undefined) main[offA8 + 1] = s.roger;
-        if (s.repeater_tail !== undefined) main[offA8 + 2] = s.repeater_tail ? 1 : 0;
-        if (s.tx_vfo !== undefined) main[offA8 + 3] = s.tx_vfo;
-        if (s.battery_type !== undefined) main[offA8 + 4] = s.battery_type;
+        // Block 6: FF2 (1FF0)
+        let bOpt0 = ext[0];
+        if (s.feat_dtmf !== undefined) bOpt0 = (bOpt0 & ~0x01) | (s.feat_dtmf & 0x01);
+        if (s.feat_pwd !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 1)) | ((s.feat_pwd & 0x01) << 1);
+        if (s.feat_1750 !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 2)) | ((s.feat_1750 & 0x01) << 2);
+        if (s.feat_alarm !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 3)) | ((s.feat_alarm & 0x01) << 3);
+        if (s.feat_vox !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 4)) | ((s.feat_vox & 0x01) << 4);
+        if (s.feat_voice !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 5)) | ((s.feat_voice & 0x01) << 5);
+        if (s.feat_noaa !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 6)) | ((s.feat_noaa & 0x01) << 6);
+        if (s.feat_fm !== undefined) bOpt0 = (bOpt0 & ~(0x01 << 7)) | ((s.feat_fm & 0x01) << 7);
+        ext[0] = bOpt0;
 
-        // 0ED0
-        const offD0 = 0x60;
-        if (s.dtmf_side_tone !== undefined) main[offD0 + 0] = (main[offD0 + 0] & ~0x01) | (s.dtmf_side_tone ? 1 : 0);
-        if (s.dtmf_separate_code !== undefined) main[offD0 + 1] = String(s.dtmf_separate_code).charCodeAt(0);
-        if (s.dtmf_group_call_code !== undefined) main[offD0 + 2] = String(s.dtmf_group_call_code).charCodeAt(0);
-        if (s.dtmf_decode_response !== undefined) main[offD0 + 3] = s.dtmf_decode_response;
-        if (s.dtmf_auto_reset_time !== undefined) main[offD0 + 4] = s.dtmf_auto_reset_time;
+        let bOpt1 = ext[1];
+        if (s.feat_rescue !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 1)) | ((s.feat_rescue & 0x01) << 1);
+        if (s.feat_scope !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 2)) | ((s.feat_scope & 0x01) << 2);
+        if (s.feat_am_fix !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 3)) | ((s.feat_am_fix & 0x01) << 3);
+        if (s.feat_game !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 4)) | ((s.feat_game & 0x01) << 4);
+        if (s.feat_raw !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 5)) | ((s.feat_raw & 0x01) << 5);
+        if (s.feat_wide !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 6)) | ((s.feat_wide & 0x01) << 6);
+        if (s.feat_flash !== undefined) bOpt1 = (bOpt1 & ~(0x01 << 7)) | ((s.feat_flash & 0x01) << 7);
+        ext[1] = bOpt1;
 
-        // 0ED8
-        const offD8 = 0x68;
-        if (s.permit_remote_kill !== undefined) main[offD8 + 2] = (main[offD8 + 2] & ~0x01) | (s.permit_remote_kill ? 1 : 0);
+        const ff2 = ext.subarray(2, 10);
 
-        // 0F40
-        if (s.f_lock !== undefined) ext1[0] = s.f_lock;
-        if (s.tx_350 !== undefined) ext1[1] = s.tx_350 ? 1 : 0;
-        if (s.killed !== undefined) ext1[2] = s.killed ? 1 : 0;
-        if (s.tx_200 !== undefined) ext1[3] = s.tx_200 ? 1 : 0;
-        if (s.tx_500 !== undefined) ext1[4] = s.tx_500 ? 1 : 0;
-        if (s.en_350 !== undefined) ext1[5] = s.en_350 ? 1 : 0;
-        if (s.scramble_enable !== undefined) ext1[6] = s.scramble_enable ? 1 : 0;
+        if (s.set_tmr !== undefined || s.set_off_tmr !== undefined) {
+            let temp2 = ff2[2];
+            if (s.set_tmr !== undefined) temp2 = (temp2 & ~0x01) | (s.set_tmr & 0x01);
+            if (s.set_off_tmr !== undefined) temp2 = (temp2 & 0x01) | ((s.set_off_tmr & 0x7F) << 1);
+            ff2[2] = temp2;
+        }
 
-        let b7_ext1 = ext1[7];
-        if (s.live_dtmf_decoder !== undefined) b7_ext1 = (b7_ext1 & ~(1 << 0)) | (s.live_dtmf_decoder ? (1 << 0) : 0);
-        if (s.battery_text !== undefined) b7_ext1 = (b7_ext1 & ~(7 << 1)) | ((s.battery_text & 7) << 1);
-        if (s.mic_bar !== undefined) b7_ext1 = (b7_ext1 & ~(1 << 4)) | (s.mic_bar ? (1 << 4) : 0);
-        if (s.am_fix !== undefined) b7_ext1 = (b7_ext1 & ~(1 << 5)) | (s.am_fix ? (1 << 5) : 0);
-        if (s.backlight_tx_rx !== undefined) b7_ext1 = (b7_ext1 & ~(3 << 6)) | ((s.backlight_tx_rx & 3) << 6);
-        ext1[7] = b7_ext1;
+        if (s.contrast !== undefined || s.invert !== undefined || s.lock !== undefined || s.gui !== undefined || s.meter !== undefined) {
+            let temp3 = ff2[3];
+            if (s.contrast !== undefined) temp3 = (temp3 & 0xF0) | (s.contrast & 0x0F);
+            if (s.invert !== undefined) temp3 = (temp3 & ~(0x01 << 4)) | ((s.invert & 0x01) << 4);
+            if (s.lock !== undefined) temp3 = (temp3 & ~(0x01 << 5)) | ((s.lock & 0x01) << 5);
+            if (s.gui !== undefined) temp3 = (temp3 & ~(0x01 << 7)) | ((s.gui & 0x01) << 7);
+            if (s.meter !== undefined) temp3 = (temp3 & ~(0x01 << 6)) | ((s.meter & 0x01) << 6);
+            ff2[3] = temp3;
+        }
 
-        // 1FF0
-        let b5_ext2 = ext2[5];
-        if (s.set_inv !== undefined) b5_ext2 = (b5_ext2 & ~(1 << 4)) | (s.set_inv ? (1 << 4) : 0);
-        if (s.set_lck !== undefined) b5_ext2 = (b5_ext2 & ~(1 << 5)) | (s.set_lck ? (1 << 5) : 0);
-        if (s.set_met !== undefined) b5_ext2 = (b5_ext2 & ~(1 << 6)) | (s.set_met ? (1 << 6) : 0);
-        if (s.set_gui !== undefined) b5_ext2 = (b5_ext2 & ~(1 << 7)) | (s.set_gui ? (1 << 7) : 0);
-        if (s.set_ctr !== undefined) b5_ext2 = (b5_ext2 & 0xF0) | (s.set_ctr & 0x0F);
-        ext2[5] = b5_ext2;
+        if (s.tot !== undefined || s.eot !== undefined) {
+            let temp4 = ff2[4];
+            if (s.tot !== undefined) temp4 = (temp4 & 0x0F) | ((s.tot & 0x0F) << 4);
+            if (s.eot !== undefined) temp4 = (temp4 & 0xF0) | (s.eot & 0x0F);
+            ff2[4] = temp4;
+        }
 
-        let b6_ext2 = ext2[6];
-        if (s.set_tot !== undefined) b6_ext2 = (b6_ext2 & 0x0F) | ((s.set_tot & 0x0F) << 4);
-        if (s.set_eot !== undefined) b6_ext2 = (b6_ext2 & 0xF0) | (s.set_eot & 0x0F);
-        ext2[6] = b6_ext2;
+        if (s.ptt_mode !== undefined || s.pwr_mode !== undefined) {
+            let temp5 = ff2[5];
+            if (s.ptt_mode !== undefined) temp5 = (temp5 & 0xF0) | (s.ptt_mode & 0x0F);
+            if (s.pwr_mode !== undefined) temp5 = (temp5 & 0x0F) | ((s.pwr_mode & 0x0F) << 4);
+            ff2[5] = temp5;
+        }
 
-        let b7_ext2 = ext2[7];
-        if (s.set_pwr !== undefined) b7_ext2 = (b7_ext2 & 0x0F) | ((s.set_pwr & 0x0F) << 4);
-        if (s.set_ptt !== undefined) b7_ext2 = (b7_ext2 & 0xF0) | (s.set_ptt & 0x0F);
-        ext2[7] = b7_ext2;
-
-        // To be safe, assign back if the buffer reference was somehow broken (though usually modify in place works)
-        if (!buffers.settings) buffers.settings = main;
+        buffers.settings = main;
+        buffers.f40 = f40;
+        buffers.settings_ext = ext;
     }
 
     async startDisplayMirror(protocol: any) {
